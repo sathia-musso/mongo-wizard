@@ -301,7 +301,7 @@ def format_task_table_row(task_name: str, task_config: dict) -> tuple[str, str, 
             if target_count_int < source_count_int:
                 target_count = f"[green]{target_count}[/green]"
             elif target_count_int > source_count_int:
-                target_count = f"[red blink]{target_count}[/red]"
+                target_count = f"[red][blink]{target_count}[/blink][/red]"
 
     except Exception:
         # Silently fall back to simple display
