@@ -1,0 +1,3 @@
+"""
+mongo-wizard Test Suite
+"""
