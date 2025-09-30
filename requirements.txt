@@ -1,0 +1,4 @@
+click
+pymongo
+rich
+tqdm

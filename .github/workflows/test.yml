@@ -1,0 +1,282 @@
+name: Test Suite
+
+on:
+  push:
+    branches: [ master, main, develop ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('requirements*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
+
+    - name: Run unit tests (no MongoDB required)
+      run: |
+        pytest tests/ \
+          --ignore=tests/test_integration.py \
+          --ignore=tests/test_full_integration.py \
+          -v \
+          --tb=short
+
+  integration-tests:
+    name: Integration Tests with MongoDB
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        mongodb-version: ["5.0", "6.0", "7.0"]
+        python-version: ["3.10", "3.11"]
+
+    services:
+      mongodb:
+        image: mongo:${{ matrix.mongodb-version }}
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --eval 'db.adminCommand({ping: 1})' || mongo --eval 'db.adminCommand({ping: 1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install MongoDB Database Tools
+      run: |
+        wget -qO - https://www.mongodb.org/static/pgp/server-7.0.asc | sudo apt-key add -
+        echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+        sudo apt-get update
+        sudo apt-get install -y mongodb-database-tools
+
+    - name: Verify MongoDB tools
+      run: |
+        mongodump --version
+        mongorestore --version
+
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r requirements-dev.txt
+
+    - name: Wait for MongoDB to be ready
+      run: |
+        for i in {1..30}; do
+          if python -c "from pymongo import MongoClient; client = MongoClient('mongodb://localhost:27017', serverSelectionTimeoutMS=1000); client.admin.command('ping'); print('MongoDB is ready!')"; then
+            break
+          fi
+          echo "Waiting for MongoDB... ($i/30)"
+          sleep 2
+        done
+
+    - name: Run integration tests
+      run: |
+        pytest tests/test_integration.py -v --tb=short
+        pytest tests/test_full_integration.py -v --tb=short
+
+    - name: Generate coverage report
+      if: matrix.python-version == '3.11' && matrix.mongodb-version == '7.0'
+      run: |
+        pytest tests/ --cov=mongo_wizard --cov-report=xml --cov-report=term
+
+    - name: Upload coverage to Codecov
+      if: matrix.python-version == '3.11' && matrix.mongodb-version == '7.0'
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: integration-tests
+        name: codecov-umbrella
+
+  cli-tests:
+    name: CLI and End-to-End Tests
+    runs-on: ubuntu-latest
+
+    services:
+      mongodb:
+        image: mongo:7.0
+        ports:
+          - 27017:27017
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install MongoDB tools and package
+      run: |
+        # Install MongoDB tools
+        sudo apt-get update
+        sudo apt-get install -y wget gnupg
+        wget -qO - https://www.mongodb.org/static/pgp/server-7.0.asc | sudo apt-key add -
+        echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+        sudo apt-get update
+        sudo apt-get install -y mongodb-database-tools
+
+        # Install package in editable mode
+        pip install -e .
+        pip install -r requirements-dev.txt
+
+    - name: Test CLI commands
+      run: |
+        # Test help
+        mw --help
+
+        # Test version
+        mw --version
+
+        # Test list commands (should work even with no saved items)
+        mw --list-hosts || true
+        mw --list-tasks || true
+
+    - name: Test interactive features
+      run: |
+        # Create a test script for interactive testing
+        cat > test_cli.py << 'EOF'
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        # Test that commands are available
+        commands = ["mw", "mongo-wizard"]
+        for cmd in commands:
+            result = subprocess.run([cmd, "--version"], capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"Command {cmd} failed!")
+                sys.exit(1)
+            print(f"✓ {cmd} command works: {result.stdout.strip()}")
+
+        # Test Python module execution
+        result = subprocess.run([sys.executable, "-m", "mongo_wizard", "--version"],
+                              capture_output=True, text=True)
+        if result.returncode != 0:
+            print("Python module execution failed!")
+            sys.exit(1)
+        print(f"✓ Python module works: {result.stdout.strip()}")
+
+        print("\n✅ All CLI tests passed!")
+        EOF
+
+        python test_cli.py
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install security tools
+      run: |
+        pip install bandit safety
+
+    - name: Run Bandit security scan
+      run: |
+        bandit -r mongo_wizard/ -f txt -o bandit-report.txt || true
+        cat bandit-report.txt
+
+    - name: Check dependencies for vulnerabilities
+      run: |
+        pip install -r requirements.txt
+        safety check --json
+
+  publish-test:
+    name: Test Package Build
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install build tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install build twine
+
+    - name: Build package
+      run: |
+        python -m build
+
+    - name: Check package
+      run: |
+        twine check dist/*
+
+    - name: Test installation
+      run: |
+        # Create virtual env for test install
+        python -m venv test_env
+        source test_env/bin/activate
+        pip install dist/*.whl
+
+        # Test that commands work
+        mw --version
+        mongo-wizard --version
+
+        # Test import
+        python -c "from mongo_wizard import MongoAdvancedCopier; print('Import successful!')"
+
+  notification:
+    name: Status Notification
+    needs: [unit-tests, integration-tests, cli-tests, security-scan, publish-test]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+    - name: Check test status
+      run: |
+        echo "Unit Tests: ${{ needs.unit-tests.result }}"
+        echo "Integration Tests: ${{ needs.integration-tests.result }}"
+        echo "CLI Tests: ${{ needs.cli-tests.result }}"
+        echo "Security Scan: ${{ needs.security-scan.result }}"
+        echo "Package Build: ${{ needs.publish-test.result }}"
+
+        if [ "${{ needs.unit-tests.result }}" != "success" ] || \
+           [ "${{ needs.integration-tests.result }}" != "success" ] || \
+           [ "${{ needs.cli-tests.result }}" != "success" ]; then
+          echo "❌ Some tests failed!"
+          exit 1
+        else
+          echo "✅ All tests passed!"
+        fi

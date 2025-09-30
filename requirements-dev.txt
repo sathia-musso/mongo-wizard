@@ -1,0 +1,9 @@
+# Development dependencies
+pytest
+pytest-cov
+pytest-mock
+black
+flake8
+mypy
+bandit
+safety

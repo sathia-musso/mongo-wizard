@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+MagicMock/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+test_env/
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Config files with potentially sensitive data (but not pyproject.toml)
+copies*.json
+config*.json
+settings*.json
+!pyproject.toml
+
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+*.log
+.claude/
+
+# Backup files
+*.backup
+*.archive
+*_backup_*
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Database dumps
+*.dump
+*.bson
+*.json.gz
+
+# Private notes
+NEVER_COMMIT.md
+PRIVATE_NOTES.md
+credentials.txt
+passwords.txt
+TODO_PRIVATE.md
