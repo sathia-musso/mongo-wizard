@@ -141,9 +141,10 @@ class TestSSHStorage:
         assert success is True
         assert "successful" in msg
 
+    @patch('mongo_wizard.storage.HAS_PARAMIKO', False)
     @patch('subprocess.run')
     def test_upload_with_verification(self, mock_run):
-        """Test SSH upload with verification"""
+        """Test SSH upload with verification (subprocess fallback)"""
         # Mock successful upload and verification
         mock_run.side_effect = [
             MagicMock(returncode=0),  # mkdir

@@ -310,6 +310,22 @@ class SSHStorage(StorageBackend):
 
             if self.key_path:
                 connect_kwargs['key_filename'] = self.key_path
+            else:
+                # Try default SSH keys if no key specified
+                import os.path
+                default_keys = [
+                    os.path.expanduser('~/.ssh/id_rsa'),
+                    os.path.expanduser('~/.ssh/id_ed25519'),
+                    os.path.expanduser('~/.ssh/id_ecdsa'),
+                    os.path.expanduser('~/.ssh/id_dsa'),
+                ]
+                existing_keys = [k for k in default_keys if os.path.exists(k)]
+                if existing_keys:
+                    connect_kwargs['key_filename'] = existing_keys
+
+                # Also try to use SSH agent
+                connect_kwargs['allow_agent'] = True
+                connect_kwargs['look_for_keys'] = True
 
             ssh.connect(**connect_kwargs)
 
@@ -443,6 +459,23 @@ class SSHStorage(StorageBackend):
 
             if self.key_path:
                 connect_kwargs['key_filename'] = self.key_path
+            else:
+                # Try default SSH keys if no key specified
+                import os.path
+                default_keys = [
+                    os.path.expanduser('~/.ssh/id_rsa'),
+                    os.path.expanduser('~/.ssh/id_ed25519'),
+                    os.path.expanduser('~/.ssh/id_ecdsa'),
+                    os.path.expanduser('~/.ssh/id_dsa'),
+                ]
+                existing_keys = [k for k in default_keys if os.path.exists(k)]
+                if existing_keys:
+                    connect_kwargs['key_filename'] = existing_keys
+                    console.print(f"[dim]Trying SSH keys: {', '.join(existing_keys)}[/dim]")
+
+                # Also try to use SSH agent
+                connect_kwargs['allow_agent'] = True
+                connect_kwargs['look_for_keys'] = True
 
             ssh.connect(**connect_kwargs)
 
