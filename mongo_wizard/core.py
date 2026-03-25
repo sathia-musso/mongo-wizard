@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from pymongo import MongoClient, ReplaceOne
-from pymongo.errors import ConnectionFailure
+from pymongo.errors import ConnectionFailure, BulkWriteError
 from rich.console import Console
 from .formatting import format_number
 from .utils import connect_mongo
@@ -177,15 +177,28 @@ class MongoAdvancedCopier:
                 batch.append(doc)
 
                 if len(batch) >= batch_size:
-                    target_collection.insert_many(batch, ordered=False)
-                    copied += len(batch)
+                    try:
+                        target_collection.insert_many(batch, ordered=False)
+                        copied += len(batch)
+                    except BulkWriteError as bwe:
+                        # Some docs may have been inserted despite the error (duplicates skipped)
+                        inserted = bwe.details.get('nInserted', 0)
+                        copied += inserted
+                        n_errors = len(bwe.details.get('writeErrors', []))
+                        console.print(f"  [yellow]⚠[/yellow] Batch: {inserted} inserted, {n_errors} duplicates skipped")
                     progress.update(task, advance=len(batch))
                     batch = []
 
             # Insert remaining documents
             if batch:
-                target_collection.insert_many(batch, ordered=False)
-                copied += len(batch)
+                try:
+                    target_collection.insert_many(batch, ordered=False)
+                    copied += len(batch)
+                except BulkWriteError as bwe:
+                    inserted = bwe.details.get('nInserted', 0)
+                    copied += inserted
+                    n_errors = len(bwe.details.get('writeErrors', []))
+                    console.print(f"  [yellow]⚠[/yellow] Batch: {inserted} inserted, {n_errors} duplicates skipped")
                 progress.update(task, advance=len(batch))
 
         return {
@@ -231,14 +244,30 @@ class MongoAdvancedCopier:
             if drop_target:
                 restore_cmd.append('--drop')
 
-            # Pipe mongodump to mongorestore
-            dump_process = subprocess.Popen(dump_cmd, stdout=subprocess.PIPE)
-            restore_process = subprocess.Popen(restore_cmd, stdin=dump_process.stdout)
+            # Pipe mongodump to mongorestore with timeout and stderr capture
+            dump_process = subprocess.Popen(dump_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            restore_process = subprocess.Popen(restore_cmd, stdin=dump_process.stdout, stderr=subprocess.PIPE)
 
             dump_process.stdout.close()
-            restore_process.communicate()
 
-            return restore_process.returncode == 0
+            # Wait with timeout (10 minutes max)
+            try:
+                _, restore_stderr = restore_process.communicate(timeout=600)
+                dump_stderr = dump_process.stderr.read()
+            except subprocess.TimeoutExpired:
+                restore_process.kill()
+                dump_process.kill()
+                console.print("[red]mongodump/restore timed out after 10 minutes[/red]")
+                return False
+
+            if restore_process.returncode != 0:
+                # Show stderr from whichever process failed
+                error_msg = (restore_stderr or dump_stderr or b'').decode('utf-8', errors='replace').strip()
+                if error_msg:
+                    console.print(f"[yellow]⚠ mongodump/restore stderr: {error_msg}[/yellow]")
+                return False
+
+            return True
 
         except Exception as e:
             console.print(f"[yellow]⚠ mongodump/restore failed: {e}[/yellow]")
@@ -256,10 +285,15 @@ class MongoAdvancedCopier:
 
             console.print(f"[cyan]💾 Creating backup: {backup_name}[/cyan]")
 
-            # Copy documents
-            docs = list(source_coll.find())
-            if docs:
-                backup_coll.insert_many(docs)
+            # Copy documents in batches to avoid OOM on large collections
+            batch = []
+            for doc in source_coll.find():
+                batch.append(doc)
+                if len(batch) >= DEFAULT_BATCH_SIZE:
+                    backup_coll.insert_many(batch, ordered=False)
+                    batch = []
+            if batch:
+                backup_coll.insert_many(batch, ordered=False)
 
             # Copy indexes
             for index in source_coll.list_indexes():

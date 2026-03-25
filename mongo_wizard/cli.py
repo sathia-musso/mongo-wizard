@@ -346,9 +346,4 @@ def main(source, target, source_db, target_db, source_collection, drop_target,
 
 
 if __name__ == '__main__':
-    # If no arguments, launch interactive mode directly
-    if len(sys.argv) == 1:
-        wizard = MongoWizard()
-        wizard.run()
-    else:
-        main()
+    main()

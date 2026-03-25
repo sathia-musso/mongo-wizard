@@ -17,7 +17,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich import box
 
-from .storage import StorageFactory, StorageBackend
+from .storage import StorageFactory, StorageBackend, LocalStorage
 from .utils import check_mongodb_tools, connect_mongo
 from .formatting import format_docs, format_number, format_size
 from .constants import DEFAULT_MONGO_TIMEOUT
@@ -136,7 +136,7 @@ class BackupManager:
             size_human = format_size(archive_size)
 
             # Upload to storage
-            if isinstance(self.storage, type(StorageFactory.create('/'))):  # LocalStorage
+            if isinstance(self.storage, LocalStorage):
                 # For local, just move the file
                 if isinstance(self.storage_config, dict):
                     final_path = os.path.join(self.storage_config.get('path', '.'), backup_name)
@@ -233,7 +233,8 @@ class BackupManager:
                 task = progress.add_task("[cyan]Extracting archive...", total=100)
 
                 with tarfile.open(local_backup, 'r:gz') as tar:
-                    tar.extractall(extract_path)
+                    # filter='data' prevents path traversal attacks (e.g. ../../etc/cron.d/malware)
+                    tar.extractall(extract_path, filter='data')
                     progress.update(task, completed=100)
 
             # Find database in dump

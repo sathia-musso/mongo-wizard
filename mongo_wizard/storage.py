@@ -298,7 +298,10 @@ class SSHStorage(StorageBackend):
         try:
             # Create SSH client
             ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            # Load system known_hosts for host key verification (prevents MITM)
+            ssh.load_system_host_keys()
+            # Warn (but don't reject) for hosts not yet in known_hosts
+            ssh.set_missing_host_key_policy(paramiko.WarningPolicy())
 
             # Connect
             connect_kwargs = {
@@ -447,7 +450,10 @@ class SSHStorage(StorageBackend):
         try:
             # Create SSH client
             ssh = paramiko.SSHClient()
-            ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            # Load system known_hosts for host key verification (prevents MITM)
+            ssh.load_system_host_keys()
+            # Warn (but don't reject) for hosts not yet in known_hosts
+            ssh.set_missing_host_key_policy(paramiko.WarningPolicy())
 
             # Connect
             connect_kwargs = {

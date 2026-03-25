@@ -136,6 +136,9 @@ def parse_collection_selection(selection: str, max_value: int) -> list[int]:
             try:
                 start_idx = int(start) - 1
                 end_idx = int(end)
+                # Clamp to valid bounds
+                start_idx = max(0, start_idx)
+                end_idx = min(end_idx, max_value)
                 indices.extend(range(start_idx, end_idx))
             except ValueError:
                 console.print(f"[red]Invalid range: {part}[/red]")

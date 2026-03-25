@@ -12,7 +12,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import click
 from pymongo import MongoClient
 from rich import box
 from rich.console import Console
@@ -457,7 +456,11 @@ class MongoWizard:
             target_db = Prompt.ask("Enter target database name", default=f"{source_db}_copy")
 
         target_collection = None
-        if source_collection:
+        if isinstance(source_collection, list):
+            # Multi-collection: always use same names on target
+            target_collection = source_collection
+            console.print(f"[dim]Target collections will use the same names as source ({len(source_collection)} collections)[/dim]")
+        elif source_collection:
             if Confirm.ask(f"[yellow]Use same collection name '{source_collection}' on target?[/yellow]", default=True):
                 target_collection = source_collection
             else:
@@ -506,7 +509,17 @@ class MongoWizard:
         source_count = None
         target_count = None
         try:
-            if source_collection:
+            if isinstance(source_collection, list):
+                # Multiple collections selected
+                source_count = sum(
+                    self.source_client[source_db][c].estimated_document_count() for c in source_collection
+                )
+                target_names = self.target_client[target_db].list_collection_names()
+                target_count = sum(
+                    self.target_client[target_db][c].estimated_document_count()
+                    for c in source_collection if c in target_names
+                )
+            elif source_collection:
                 source_count = self.source_client[source_db][source_collection].estimated_document_count()
                 if target_collection in self.target_client[target_db].list_collection_names():
                     target_count = self.target_client[target_db][target_collection].estimated_document_count()
@@ -1631,135 +1644,3 @@ class MongoWizard:
                 break
 
 
-@click.command()
-@click.option('--interactive', '-i', is_flag=True, help='Launch interactive wizard')
-@click.option('--task', '-t', help='Run a saved task by name')
-@click.option('--list-tasks', is_flag=True, help='List all saved tasks')
-@click.option('--force', '-f', is_flag=True, help='Skip confirmation when running task (deprecated, use -y)')
-@click.option('-y', '--yes', 'assume_yes', is_flag=True, help='Assume yes to all prompts (fully automated)')
-def main(interactive, task, list_tasks, force, assume_yes):
-    """
-    MongoDB Copy Wizard - Interactive tool with saved hosts and tasks
-
-    Examples:
-
-    Interactive mode (default):
-        mongo_wizard.py
-        mongo_wizard.py -i
-
-    Run saved task:
-        mongo_wizard.py --task daily_backup
-        mongo_wizard.py -t daily_backup -y  # Fully automated, no prompts
-
-    List saved tasks:
-        mongo_wizard.py --list-tasks
-    """
-
-    wizard = MongoWizard()
-
-    # List tasks mode
-    if list_tasks:
-        settings_manager = SettingsManager()
-        saved_tasks_dict = settings_manager.list_tasks()  # Returns Dict[str, Dict]
-
-        if not saved_tasks_dict:
-            console.print("[yellow]No saved tasks found[/yellow]")
-        else:
-            table = Table(title="Saved Tasks", box=box.ROUNDED)
-            table.add_column("Name", style="green")
-            table.add_column("Source DB", style="cyan")
-            table.add_column("Target DB", style="yellow")
-            table.add_column("Collection", style="magenta")
-
-            for task_name, task_config in saved_tasks_dict.items():
-                # Handle collection display (can be string, list, or None)
-                coll = task_config.get('source_collection', 'ALL')
-                if isinstance(coll, list):
-                    coll_display = f"{len(coll)} collections"
-                elif coll:
-                    coll_display = coll
-                else:
-                    coll_display = 'ALL'
-
-                table.add_row(
-                    task_name,
-                    task_config['source_db'],
-                    task_config['target_db'],
-                    coll_display
-                )
-
-            console.print(table)
-            console.print(f"\n[dim]Run a task with: python mongo_wizard.py --task <name>[/dim]")
-        return
-
-    # Run task mode
-    if task:
-        settings_manager = SettingsManager()
-        task_config = settings_manager.get_task(task)
-
-        if not task_config:
-            console.print(f"[red]❌ Task '{task}' not found![/red]")
-            console.print("[dim]Use --list-tasks to see available tasks[/dim]")
-            sys.exit(1)
-
-        console.print(f"[cyan]🚀 Running task: {task}[/cyan]\n")
-
-        # Show task summary
-        console.print(f"[bold]Source:[/bold] {task_config['source_uri']}")
-        console.print(f"[bold]Target:[/bold] {task_config['target_uri']}")
-        console.print(f"[bold]Database:[/bold] {task_config['source_db']} → {task_config['target_db']}")
-        if task_config.get('source_collection'):
-            console.print(
-                f"[bold]Collection:[/bold] {task_config['source_collection']} → {task_config.get('target_collection', task_config['source_collection'])}")
-
-        if not force and not assume_yes:
-            if not Confirm.ask("\n[yellow]Execute this task?[/yellow]"):
-                console.print("[red]Cancelled[/red]")
-                sys.exit(0)
-
-        # Execute task
-        from .core import MongoAdvancedCopier
-
-        copier = MongoAdvancedCopier(task_config['source_uri'], task_config['target_uri'])
-
-        try:
-            copier.connect()
-
-            if task_config.get('source_collection'):
-                result = copier.copy_collection_with_indexes(
-                    task_config['source_db'], task_config['source_collection'],
-                    task_config['target_db'], task_config.get('target_collection', task_config['source_collection']),
-                    drop_target=task_config.get('drop_target', False),
-                    force=assume_yes
-                )
-                console.print(f"[green]✅ Copied {format_number(result['documents_copied'])} documents[/green]")
-            else:
-                results = copier.copy_entire_database(
-                    task_config['source_db'], task_config['target_db'],
-                    drop_target=task_config.get('drop_target', False),
-                    force=assume_yes
-                )
-                total_docs = sum(r['documents_copied'] for r in results.values())
-                console.print(f"[green]✅ Copied {len(results)} collections, {format_number(total_docs)} documents[/green]")
-
-            console.print("[green]✅ Task completed successfully![/green]")
-
-        except Exception as e:
-            console.print(f"[red]❌ Error: {e}[/red]")
-            sys.exit(1)
-        finally:
-            copier.close()
-
-        return
-
-    # Default: interactive mode
-    wizard.run()
-
-
-if __name__ == '__main__':
-    # If no arguments, launch interactive mode
-    if len(sys.argv) == 1:
-        wizard = MongoWizard()
-        wizard.run()
-    else:
-        main()

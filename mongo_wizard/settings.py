@@ -3,8 +3,9 @@ Settings manager for MongoDB Wizard
 """
 
 import json
+import os
+import stat
 from pathlib import Path
-# No typing imports needed anymore with Python 3.10+
 
 from rich.console import Console
 
@@ -33,17 +34,21 @@ class SettingsManager:
         return {"hosts": {}, "tasks": {}, "storages": {}}
 
     def save_settings(self):
-        """Save settings to file"""
+        """Save settings to file with restricted permissions (600)
+        because it may contain passwords and connection URIs."""
         try:
             with open(self.config_file, 'w') as f:
                 json.dump(self.settings, f, indent=2)
+            # Restrict permissions: owner read/write only (like ~/.ssh/config)
+            os.chmod(self.config_file, stat.S_IRUSR | stat.S_IWUSR)
         except Exception as e:
             console.print(f"[red]❌ Error saving settings: {e}[/red]")
 
-    def add_host(self, name: str, uri: str):
+    def add_host(self, name: str, uri: str) -> bool:
         """Add or update a saved host"""
         self.settings['hosts'][name] = uri
         self.save_settings()
+        return True
 
     def get_host(self, name: str) -> str | None:
         """Get a saved host URI"""
@@ -61,12 +66,13 @@ class SettingsManager:
             return True
         return False
 
-    def add_task(self, name: str, config: dict):
+    def add_task(self, name: str, config: dict) -> bool:
         """Add or update a saved task"""
         if 'tasks' not in self.settings:
             self.settings['tasks'] = {}
         self.settings['tasks'][name] = config
         self.save_settings()
+        return True
 
     def get_task(self, name: str) -> dict | None:
         """Get a saved task configuration"""
@@ -85,12 +91,13 @@ class SettingsManager:
         return False
 
     # Storage management
-    def add_storage(self, name: str, config: dict):
+    def add_storage(self, name: str, config: dict) -> bool:
         """Add or update a storage configuration"""
         if 'storages' not in self.settings:
             self.settings['storages'] = {}
         self.settings['storages'][name] = config
         self.save_settings()
+        return True
 
     def get_storage(self, name: str) -> dict | None:
         """Get a storage configuration by name"""
