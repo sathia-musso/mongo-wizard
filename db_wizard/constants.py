@@ -13,15 +13,9 @@ DEFAULT_CONNECTION_TIMEOUT = 5000
 # Shorter timeout for quick checks (e.g., listing hosts status)
 QUICK_CHECK_TIMEOUT = 1000
 
-# Longer timeout for operations that might take time
-LONG_OPERATION_TIMEOUT = 3000
-
 # ============================================================================
 # MongoDB-specific Settings
 # ============================================================================
-
-# Keep the old name as alias so existing engine code doesn't break
-DEFAULT_MONGO_TIMEOUT = DEFAULT_CONNECTION_TIMEOUT
 
 # Default batch size for Python fallback document insertion (MongoDB only)
 DEFAULT_BATCH_SIZE = 1000
@@ -39,9 +33,6 @@ CHECKSUM_THRESHOLD = 10000
 
 # Default MySQL port
 DEFAULT_MYSQL_PORT = 3306
-
-# Default MySQL connection timeout in seconds (for CLI tools)
-DEFAULT_MYSQL_TIMEOUT = 10
 
 # MySQL system databases to exclude from listings
 MYSQL_SYSTEM_DATABASES = frozenset({

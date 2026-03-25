@@ -1,13 +1,13 @@
 """
-Integration tests for MongoDB Wizard
+Integration tests for db-wizard
 Requires a local MongoDB instance running on localhost:27017
 """
 
 import pytest
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
-from mongo_wizard.core import MongoAdvancedCopier
-from mongo_wizard.settings import SettingsManager
+from db_wizard.engines.mongo import MongoEngine
+from db_wizard.settings import SettingsManager
 import tempfile
 from pathlib import Path
 
@@ -59,60 +59,57 @@ class TestIntegration:
 
     def test_copy_collection_with_indexes(self):
         """Test copying a collection with indexes"""
-        copier = MongoAdvancedCopier(
-            "mongodb://localhost:27017",
-            "mongodb://localhost:27017"
-        )
-        copier.connect()
+        source_engine = MongoEngine("mongodb://localhost:27017")
+        target_engine = MongoEngine("mongodb://localhost:27017")
+        source_engine.connect()
+        target_engine.connect()
 
         try:
-            result = copier.copy_collection_with_indexes(
-                "test_source", "test_collection",
-                "test_target", "test_collection",
+            result = target_engine.copy(
+                source_engine=source_engine,
+                source_db="test_source", source_table="test_collection",
+                target_db="test_target", target_table="test_collection",
                 drop_target=True,
                 force=True,
-                force_python=True  # Force Python for predictable testing
+                force_python=True
             )
 
-            # Check results
             assert result['documents_copied'] == 100
-            assert result['indexes_created'] == 2  # name and value indexes (not _id)
+            assert result['indexes_created'] == 2
 
-            # Verify data
             target_docs = list(self.target_db.test_collection.find().sort("_id"))
             assert len(target_docs) == 100
             assert target_docs[0]["name"] == "Document 0"
 
-            # Verify indexes
             indexes = list(self.target_db.test_collection.list_indexes())
             index_names = [idx['name'] for idx in indexes]
             assert 'name_1' in index_names
             assert 'value_-1' in index_names
 
         finally:
-            copier.close()
+            source_engine.close()
+            target_engine.close()
 
     def test_copy_with_verification(self):
         """Test copy with verification"""
-        copier = MongoAdvancedCopier(
-            "mongodb://localhost:27017",
-            "mongodb://localhost:27017"
-        )
-        copier.connect()
+        source_engine = MongoEngine("mongodb://localhost:27017")
+        target_engine = MongoEngine("mongodb://localhost:27017")
+        source_engine.connect()
+        target_engine.connect()
 
         try:
-            # Copy
-            copier.copy_collection_with_indexes(
-                "test_source", "test_collection",
-                "test_target", "verified_collection",
+            target_engine.copy(
+                source_engine=source_engine,
+                source_db="test_source", source_table="test_collection",
+                target_db="test_target", target_table="verified_collection",
                 force=True,
-                force_python=True  # Force Python for predictable testing
+                force_python=True
             )
 
-            # Verify
-            verification = copier.verify_copy(
+            verification = source_engine.verify_copy(
                 "test_source", "test_collection",
                 "test_target", "verified_collection",
+                target_engine=target_engine,
                 sample_size=10
             )
 
@@ -124,82 +121,79 @@ class TestIntegration:
             assert len(verification['sample_errors']) == 0
 
         finally:
-            copier.close()
+            source_engine.close()
+            target_engine.close()
 
     def test_backup_before_copy(self):
         """Test creating backup before copy"""
-        # Create initial target data
         self.target_db.important.insert_many([
             {"_id": i, "data": f"Important {i}"}
             for i in range(10)
         ])
 
-        copier = MongoAdvancedCopier(
-            "mongodb://localhost:27017",
-            "mongodb://localhost:27017"
-        )
-        copier.connect()
+        source_engine = MongoEngine("mongodb://localhost:27017")
+        target_engine = MongoEngine("mongodb://localhost:27017")
+        source_engine.connect()
+        target_engine.connect()
 
         try:
-            # Create backup
-            backup_name = copier.backup_before_copy("test_target", "important")
+            backup_name = target_engine.backup_before_copy("test_target", "important")
             assert backup_name.startswith("important_backup_")
 
-            # Verify backup exists
             backup_coll = self.target_db[backup_name]
             assert backup_coll.count_documents({}) == 10
 
-            # Now copy new data
-            copier.copy_collection_with_indexes(
-                "test_source", "test_collection",
-                "test_target", "important",
+            target_engine.copy(
+                source_engine=source_engine,
+                source_db="test_source", source_table="test_collection",
+                target_db="test_target", target_table="important",
                 drop_target=True,
                 force=True,
-                force_python=True  # Force Python for predictable testing
+                force_python=True
             )
 
-            # Original collection should have new data
             assert self.target_db.important.count_documents({}) == 100
-
-            # Backup should still have old data
             assert backup_coll.count_documents({}) == 10
 
         finally:
-            copier.close()
+            source_engine.close()
+            target_engine.close()
 
     def test_copy_multiple_collections(self):
         """Test copying multiple collections"""
-        # Create more collections
         self.source_db.users.insert_many([{"_id": i, "user": f"user{i}"} for i in range(50)])
         self.source_db.products.insert_many([{"_id": i, "product": f"prod{i}"} for i in range(30)])
 
-        copier = MongoAdvancedCopier(
-            "mongodb://localhost:27017",
-            "mongodb://localhost:27017"
-        )
-        copier.connect()
+        source_engine = MongoEngine("mongodb://localhost:27017")
+        target_engine = MongoEngine("mongodb://localhost:27017")
+        source_engine.connect()
+        target_engine.connect()
 
         try:
-            results = copier.copy_multiple_collections(
-                "test_source", "test_target",
-                ["test_collection", "users", "products"],
-                drop_target=True,
-                force=True,
-                force_python=True  # Force Python for predictable testing
-            )
+            results = {}
+            for coll_name in ["test_collection", "users", "products"]:
+                result = target_engine.copy(
+                    source_engine=source_engine,
+                    source_db="test_source", source_table=coll_name,
+                    target_db="test_target", target_table=coll_name,
+                    drop_target=True,
+                    force=True,
+                    force_python=True
+                )
+                results[coll_name] = result
 
             assert len(results) == 3
             assert results['test_collection']['documents_copied'] == 100
             assert results['users']['documents_copied'] == 50
             assert results['products']['documents_copied'] == 30
 
-            # Verify in target
             assert self.target_db.test_collection.count_documents({}) == 100
             assert self.target_db.users.count_documents({}) == 50
             assert self.target_db.products.count_documents({}) == 30
 
         finally:
-            copier.close()
+            source_engine.close()
+            target_engine.close()
 
     def test_settings_manager_with_temp_file(self):
         """Test SettingsManager with temporary config file"""
@@ -207,12 +201,10 @@ class TestIntegration:
             tmp_path = Path(tmp.name)
 
         try:
-            # Create manager with temp file
             manager = SettingsManager()
             manager.config_file = tmp_path
-            manager.settings = {"hosts": {}, "tasks": {}}  # Initialize properly
+            manager.settings = {"hosts": {}, "tasks": {}}
 
-            # Test operations
             manager.add_host("test", "mongodb://test:27017")
             manager.add_task("test_task", {
                 "source_uri": "mongodb://source",
@@ -221,10 +213,8 @@ class TestIntegration:
                 "target_db": "test_backup"
             })
 
-            # Save and reload
             manager.save_settings()
 
-            # Create new manager to test loading
             new_manager = SettingsManager()
             new_manager.config_file = tmp_path
             new_manager.settings = new_manager.load_settings()
@@ -233,6 +223,5 @@ class TestIntegration:
             assert new_manager.get_task("test_task")["source_db"] == "test"
 
         finally:
-            # Cleanup
             if tmp_path.exists():
                 tmp_path.unlink()

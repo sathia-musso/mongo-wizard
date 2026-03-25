@@ -3,11 +3,11 @@ Test utility functions
 """
 
 import pytest
-from mongo_wizard.utils import (
+from db_wizard.utils import (
     parse_collection_selection,
     format_document_count,
-    build_connection_uri
 )
+from db_wizard.engines.mongo import MongoEngine
 
 
 class TestUtils:
@@ -71,17 +71,17 @@ class TestUtils:
 
     def test_build_connection_uri_simple(self):
         """Test building simple connection URI"""
-        uri = build_connection_uri("localhost")
+        uri = MongoEngine.build_connection_uri("localhost")
         assert uri == "mongodb://localhost:27017/"
 
     def test_build_connection_uri_with_port(self):
         """Test building URI with custom port"""
-        uri = build_connection_uri("localhost", port=27018)
+        uri = MongoEngine.build_connection_uri("localhost", port=27018)
         assert uri == "mongodb://localhost:27018/"
 
     def test_build_connection_uri_with_auth(self):
         """Test building URI with authentication"""
-        uri = build_connection_uri(
+        uri = MongoEngine.build_connection_uri(
             "localhost",
             username="admin",
             password="secret"
@@ -90,7 +90,7 @@ class TestUtils:
 
     def test_build_connection_uri_with_auth_db(self):
         """Test building URI with auth database"""
-        uri = build_connection_uri(
+        uri = MongoEngine.build_connection_uri(
             "localhost",
             username="admin",
             password="secret",
@@ -100,7 +100,7 @@ class TestUtils:
 
     def test_build_connection_uri_complete(self):
         """Test building complete URI"""
-        uri = build_connection_uri(
+        uri = MongoEngine.build_connection_uri(
             "prod.server.com",
             port=27020,
             username="user",

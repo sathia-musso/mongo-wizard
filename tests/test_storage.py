@@ -7,7 +7,7 @@ import tempfile
 from unittest.mock import Mock, patch, MagicMock
 import pytest
 
-from mongo_wizard.storage import (
+from db_wizard.storage import (
     LocalStorage,
     SSHStorage,
     FTPStorage,
@@ -141,7 +141,7 @@ class TestSSHStorage:
         assert success is True
         assert "successful" in msg
 
-    @patch('mongo_wizard.storage.HAS_PARAMIKO', False)
+    @patch('db_wizard.storage.HAS_PARAMIKO', False)
     @patch('subprocess.run')
     def test_upload_with_verification(self, mock_run):
         """Test SSH upload with verification (subprocess fallback)"""

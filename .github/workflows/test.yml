@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
     - uses: actions/checkout@v4
@@ -51,7 +51,7 @@ jobs:
     strategy:
       matrix:
         mongodb-version: ["5.0", "6.0", "7.0"]
-        python-version: ["3.10", "3.11"]
+        python-version: ["3.11", "3.12"]
 
     services:
       mongodb:
@@ -108,7 +108,7 @@ jobs:
     - name: Generate coverage report
       if: matrix.python-version == '3.11' && matrix.mongodb-version == '7.0'
       run: |
-        pytest tests/ --cov=mongo_wizard --cov-report=xml --cov-report=term
+        pytest tests/ --cov=db_wizard --cov-report=xml --cov-report=term
 
     - name: Upload coverage to Codecov
       if: matrix.python-version == '3.11' && matrix.mongodb-version == '7.0'
@@ -180,7 +180,7 @@ jobs:
             print(f"✓ {cmd} command works: {result.stdout.strip()}")
 
         # Test Python module execution
-        result = subprocess.run([sys.executable, "-m", "mongo_wizard", "--version"],
+        result = subprocess.run([sys.executable, "-m", "db_wizard", "--version"],
                               capture_output=True, text=True)
         if result.returncode != 0:
             print("Python module execution failed!")
@@ -210,7 +210,7 @@ jobs:
 
     - name: Run Bandit security scan
       run: |
-        bandit -r mongo_wizard/ -f txt -o bandit-report.txt || true
+        bandit -r db_wizard/ -f txt -o bandit-report.txt || true
         cat bandit-report.txt
 
     - name: Check dependencies for vulnerabilities
@@ -255,7 +255,7 @@ jobs:
         mongo-wizard --version
 
         # Test import
-        python -c "from mongo_wizard import MongoAdvancedCopier; print('Import successful!')"
+        python -c "from db_wizard import DatabaseEngine, EngineFactory; print('Import successful!')"
 
   notification:
     name: Status Notification

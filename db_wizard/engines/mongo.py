@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 MongoDB engine implementation.
 ALL pymongo code lives here and nowhere else.
@@ -7,7 +8,6 @@ import hashlib
 import json
 import shutil
 import subprocess
-import sys
 from datetime import datetime
 from typing import Any, Self
 
@@ -171,9 +171,25 @@ class MongoEngine(DatabaseEngine):
         if not shutil.which('mongorestore'):
             return False
 
-        cmd = ['mongorestore', '--uri', self.uri, input_path]
+        cmd = ['mongorestore', '--uri', self.uri]
         if drop_target:
             cmd.append('--drop')
+
+        # Detect source database from the dump directory
+        import os
+        source_db = None
+        if os.path.isdir(input_path):
+            dirs = [d for d in os.listdir(input_path) if os.path.isdir(os.path.join(input_path, d))]
+            if dirs:
+                source_db = dirs[0]
+
+        if source_db and source_db != target_database:
+            cmd.extend([
+                '--nsFrom', f'{source_db}.*',
+                '--nsTo', f'{target_database}.*'
+            ])
+
+        cmd.append(input_path)
 
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:

@@ -7,7 +7,6 @@ from typing import Any
 
 from rich.console import Console
 from rich.table import Table
-from .constants import QUICK_CHECK_TIMEOUT
 
 
 def mask_password(uri: str) -> str:

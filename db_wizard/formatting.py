@@ -1,5 +1,5 @@
 """
-Centralized formatting utilities for mongo-wizard
+Centralized formatting utilities for db-wizard
 Provides consistent number and size formatting across the application
 """
 

@@ -5,7 +5,6 @@ Currently uses engine.dump()/engine.restore() for the actual DB operations.
 """
 
 import os
-import subprocess
 import tempfile
 import tarfile
 from datetime import datetime
@@ -260,11 +259,13 @@ class BackupManager:
                 success = self.engine.restore(dump_path, target_db, drop_target=drop_target)
 
             if success:
-                # Count restored rows via engine
+                # Count restored rows -- estimated_document_count() is unreliable
+                # right after mongorestore, so use count_documents({}) via client
                 total_docs = 0
                 try:
-                    for t in self.engine.list_tables(target_db):
-                        total_docs += t.get('rows', 0)
+                    db = self.engine.client[target_db]
+                    for coll_name in db.list_collection_names():
+                        total_docs += db[coll_name].count_documents({})
                 except Exception:
                     pass
 
@@ -284,7 +285,7 @@ class BackupManager:
             else:
                 console.print(f"[red]Restore failed![/red]")
                 self.close()
-                return {'success': False, 'error': 'mongorestore failed'}
+                return {'success': False, 'error': 'Restore failed'}
 
     def list_backups(self, database_filter: str | None = None) -> list[dict[str, Any]]:
         """
@@ -359,48 +360,6 @@ class BackupManager:
                 return None
         except (ValueError, KeyboardInterrupt):
             return None
-
-    def _run_mongodump(self, cmd: list[str], description: str) -> bool:
-        """Run mongodump command with progress"""
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console
-        ) as progress:
-            task = progress.add_task(f"[cyan]{description}...", total=None)
-
-            try:
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                if result.returncode == 0:
-                    progress.update(task, completed=100)
-                    return True
-                else:
-                    console.print(f"[red]mongodump error: {result.stderr}[/red]")
-                    return False
-            except Exception as e:
-                console.print(f"[red]Error: {e}[/red]")
-                return False
-
-    def _run_mongorestore(self, cmd: list[str], description: str) -> bool:
-        """Run mongorestore command with progress"""
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console
-        ) as progress:
-            task = progress.add_task(f"[cyan]{description}...", total=None)
-
-            try:
-                result = subprocess.run(cmd, capture_output=True, text=True)
-                if result.returncode == 0:
-                    progress.update(task, completed=100)
-                    return True
-                else:
-                    console.print(f"[red]mongorestore error: {result.stderr}[/red]")
-                    return False
-            except Exception as e:
-                console.print(f"[red]Error: {e}[/red]")
-                return False
 
 
 

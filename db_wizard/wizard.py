@@ -833,7 +833,7 @@ class DbWizard:
 
             if self.settings_manager.add_task(task_name, task_config):
                 console.print(f"[green]✅ Task '{task_name}' saved![/green]")
-                console.print(f"[dim]Run it anytime with: python mongo_wizard.py --task {task_name}[/dim]")
+                console.print(f"[dim]Run it anytime with: db-wizard --task {task_name}[/dim]")
 
         Prompt.ask("\nPress Enter to continue")
 

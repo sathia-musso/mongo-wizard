@@ -3,7 +3,7 @@ Tests for formatting utilities
 """
 
 import pytest
-from mongo_wizard.formatting import format_number, format_size, format_docs
+from db_wizard.formatting import format_number, format_size, format_docs
 
 
 class TestFormatNumber:

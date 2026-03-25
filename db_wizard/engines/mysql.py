@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 MySQL engine implementation.
 Uses mysqldump/mysql CLI tools exclusively - no Python MySQL driver needed.
@@ -147,13 +148,14 @@ class MySQLEngine(DatabaseEngine):
 
     def list_tables(self, database: str) -> list[dict[str, Any]]:
         """List tables in a database with row counts and index info."""
+        safe_db = database.replace("'", "''")
         cmd = ['mysql'] + _build_mysql_args(self.params) + [
             '-N', '-e',
             f"SELECT TABLE_NAME, TABLE_ROWS, "
             f"(SELECT COUNT(*) FROM information_schema.STATISTICS "
-            f"WHERE TABLE_SCHEMA = '{database}' AND TABLE_NAME = t.TABLE_NAME) "
+            f"WHERE TABLE_SCHEMA = '{safe_db}' AND TABLE_NAME = t.TABLE_NAME) "
             f"FROM information_schema.TABLES t "
-            f"WHERE TABLE_SCHEMA = '{database}' AND TABLE_TYPE = 'BASE TABLE' "
+            f"WHERE TABLE_SCHEMA = '{safe_db}' AND TABLE_TYPE = 'BASE TABLE' "
             f"ORDER BY TABLE_NAME"
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
@@ -181,10 +183,12 @@ class MySQLEngine(DatabaseEngine):
 
     def count_rows(self, database: str, table: str) -> int:
         """Get approximate row count (from TABLE_STATUS, fast)."""
+        safe_db = database.replace("'", "''")
+        safe_table = table.replace("'", "''")
         cmd = ['mysql'] + _build_mysql_args(self.params) + [
             '-N', '-e',
             f"SELECT TABLE_ROWS FROM information_schema.TABLES "
-            f"WHERE TABLE_SCHEMA = '{database}' AND TABLE_NAME = '{table}'"
+            f"WHERE TABLE_SCHEMA = '{safe_db}' AND TABLE_NAME = '{safe_table}'"
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0 and result.stdout.strip():

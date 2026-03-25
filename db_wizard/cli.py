@@ -109,8 +109,6 @@ def main(source, target, source_db, target_db, source_collection, drop_target,
             console.print("[dim]Create tasks using interactive mode[/dim]")
             return
 
-        # Title box
-        from rich.panel import Panel
         console.print()
         console.print(Panel("[bold blue]⚙️  SAVED TASKS[/bold blue]", expand=False))
         console.print()
@@ -154,10 +152,15 @@ def main(source, target, source_db, target_db, source_collection, drop_target,
         table.add_column("URI", style="green")
         table.add_column("Status", style="yellow")
 
-        for name, uri in hosts.items():
+        for name, host_value in hosts.items():
             # Mask password in URI for display
+            if isinstance(host_value, dict):
+                uri = host_value.get('uri', '')
+            else:
+                uri = host_value
+            
             display_uri = uri
-            if '@' in uri and ':' in uri.split('@')[0]:
+            if isinstance(uri, str) and '@' in uri and ':' in uri.split('@')[0]:
                 parts = uri.split('@')
                 user_pass = parts[0].split('://')[-1]
                 user = user_pass.split(':')[0]
