@@ -3,11 +3,11 @@ requires = ["setuptools>=45", "wheel", "setuptools-scm"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mongo-wizard"
-version = "1.0.0"
-description = "Advanced MongoDB copy and migration tool with a powerful CLI"
+name = "db-wizard"
+version = "2.0.0"
+description = "Advanced database copy and migration tool - supports MongoDB and MySQL"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
     {name = "Sathia Musso"},
@@ -18,7 +18,6 @@ classifiers = [
     "Topic :: Database",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -44,16 +43,18 @@ dev = [
 ]
 
 [project.scripts]
-mongo-wizard = "mongo_wizard.cli:main"
-mw = "mongo_wizard.cli:main"
+db-wizard = "db_wizard.cli:main"
+dbw = "db_wizard.cli:main"
+mw = "db_wizard.cli:main"
+mongo-wizard = "db_wizard.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/sathia-musso/mongo-wizard"
-Issues = "https://github.com/sathia-musso/mongo-wizard/issues"
-Repository = "https://github.com/sathia-musso/mongo-wizard"
+Homepage = "https://github.com/sathia-musso/db-wizard"
+Issues = "https://github.com/sathia-musso/db-wizard/issues"
+Repository = "https://github.com/sathia-musso/db-wizard"
 
 [tool.setuptools]
-packages = ["mongo_wizard"]
+packages = ["db_wizard", "db_wizard.engines"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -465,3 +465,53 @@ class TestWizardListTasksAllTypes:
         name, display, coll = format_task_table_row("broken_task", bad_task)
         assert name == "broken_task"
         assert "Invalid" in display
+
+
+# ===========================================================================
+# --count flag: default fast mode vs explicit counting
+# ===========================================================================
+
+class TestFormatTaskTableRowCountFlag:
+    """format_task_table_row must skip MongoDB connections by default"""
+
+    def test_default_no_count_does_not_connect(self):
+        """Without count=True, format_task_table_row must NOT connect to MongoDB"""
+        from mongo_wizard.utils import format_task_table_row
+
+        copy_task = {
+            'type': 'copy',
+            'source_uri': 'mongodb://nonexistent-host-that-would-timeout:27017',
+            'target_uri': 'mongodb://another-fake-host:27017',
+            'source_db': 'testdb',
+            'target_db': 'testdb_copy',
+        }
+
+        # Default (count=False): should return instantly, no MongoDB connection
+        # If it tried to connect, it would hang on the fake hosts
+        import time
+        start = time.monotonic()
+        name, display, coll = format_task_table_row("fast_task", copy_task)
+        elapsed = time.monotonic() - start
+
+        assert name == "fast_task"
+        assert "nonexistent-host-that-would-timeout" in display
+        assert "testdb" in display
+        # Must be instant (< 0.5s). If it tried to connect it'd be 3s+ timeout
+        assert elapsed < 0.5, f"format_task_table_row took {elapsed:.1f}s without count - it's connecting!"
+
+    def test_default_no_count_shows_no_doc_numbers(self):
+        """Without count=True, output should not contain doc count strings"""
+        from mongo_wizard.utils import format_task_table_row
+
+        copy_task = {
+            'type': 'copy',
+            'source_uri': 'mongodb://localhost:27017',
+            'target_uri': 'mongodb://localhost:27017',
+            'source_db': 'db1',
+            'target_db': 'db2',
+        }
+
+        name, display, coll = format_task_table_row("my_task", copy_task)
+
+        # Should NOT contain "docs" anywhere in the display
+        assert "docs" not in display

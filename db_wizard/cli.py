@@ -1,30 +1,29 @@
 #!/usr/bin/env python
 """
-mongo-wizard CLI - Main entry point
+db-wizard CLI - Main entry point
 
 Usage:
     # Interactive mode
-    python cli.py
+    dbw
 
     # Task execution
-    python cli.py -t daily_backup
-    python cli.py -t daily_backup -y  # Automated mode
+    dbw -t daily_backup
+    dbw -t daily_backup -y  # Automated mode
 
-    # Direct copy
-    python cli.py -s mongodb://source/db/coll -t mongodb://target/db/coll
+    # Direct copy (auto-detects engine from URI)
+    dbw -s mongodb://source -t mongodb://target --source-db mydb
+    dbw -s mysql://user:pass@remote/db -t mysql://localhost/db
 
     # As module
-    python -m mongo_wizard
+    python -m db_wizard
 """
 
 import os
 import sys
 import click
 from . import __version__
-from .wizard import MongoWizard
 from .settings import SettingsManager
-from .core import MongoAdvancedCopier
-from .utils import check_mongodb_tools, test_connection
+from .engine import EngineFactory
 from .task_runner import run_task, display_task_summary
 from .backup import BackupManager, BackupTask
 from .formatting import format_number
@@ -38,11 +37,11 @@ console = Console()
 
 @click.command()
 @click.version_option(version=__version__)
-@click.option('-s', '--source', help='Source MongoDB URI')
-@click.option('-t', '--target', help='Target MongoDB URI')
+@click.option('-s', '--source', help='Source database URI (mongodb:// or mysql://)')
+@click.option('-t', '--target', help='Target database URI (mongodb:// or mysql://)')
 @click.option('--source-db', help='Source database name')
 @click.option('--target-db', help='Target database name (defaults to source-db)')
-@click.option('--source-collection', help='Source collection (omit for all collections)')
+@click.option('--source-collection', help='Source collection/table (omit for all)')
 @click.option('--drop-target', is_flag=True, help='Drop target before copying')
 @click.option('--dry-run', is_flag=True, help='Show what would be done without executing')
 @click.option('--verify', is_flag=True, help='Verify copy after completion')
@@ -62,40 +61,40 @@ def main(source, target, source_db, target_db, source_collection, drop_target,
          dry_run, verify, list_tasks, list_hosts, task, force, assume_yes, force_python, verify_connection,
          backup, backup_to, restore, restore_to, count):
     """
-    mongo-wizard - Advanced MongoDB copy and migration tool
+    db-wizard - Advanced database copy and migration tool
+
+    Supports MongoDB and MySQL. Auto-detects engine from URI scheme.
 
     Examples:
 
     Interactive mode:
-        mw
+        dbw
+
+    MongoDB copy:
+        dbw -s mongodb://localhost -t mongodb://remote --source-db mydb
+
+    MySQL copy:
+        dbw -s mysql://user:pass@remote/db -t mysql://localhost/db
 
     Run saved task:
-        mw --task daily_backup
-        mw --task daily_backup -y  # Automated mode
+        dbw --task daily_backup -y
 
-    Direct copy:
-        mw -s mongodb://localhost/db1 -t mongodb://remote/db2 --source-collection users
-
-    List tasks:
-        mw --list-tasks
-
-    List hosts:
-        mw --list-hosts
+    List tasks/hosts:
+        dbw --list-tasks
+        dbw --list-hosts
     """
-
-    # Check MongoDB tools on first run
-    tools = check_mongodb_tools()
-    if not any(tools.values()):
-        console.print("[yellow]⚠ MongoDB tools not found. Some features may be limited.[/yellow]")
-        console.print("[dim]Install with: brew install mongodb-database-tools[/dim]\n")
 
     # Connection verification mode
     if verify_connection:
-        success, message = test_connection(verify_connection)
-        if success:
-            console.print(f"[green]✅ {message}[/green]")
-        else:
-            console.print(f"[red]❌ {message}[/red]")
+        try:
+            engine = EngineFactory.create(verify_connection)
+            success, message = engine.test_connection()
+            if success:
+                console.print(f"[green]✅ {message}[/green]")
+            else:
+                console.print(f"[red]❌ {message}[/red]")
+        except ValueError as e:
+            console.print(f"[red]❌ {e}[/red]")
         return
 
     # List tasks mode
@@ -166,7 +165,11 @@ def main(source, target, source_db, target_db, source_collection, drop_target,
 
             # Connection test only with --count flag (slow on remote)
             if count:
-                is_online, msg = test_connection(uri, timeout=1000)
+                try:
+                    engine = EngineFactory.create(uri)
+                    is_online, msg = engine.test_connection(timeout=1000)
+                except ValueError:
+                    is_online = False
                 status = "🟢 Online" if is_online else "🔴 Offline"
             else:
                 status = "[dim]-[/dim]"
@@ -176,7 +179,7 @@ def main(source, target, source_db, target_db, source_collection, drop_target,
         console.print(table)
         console.print(f"\n[dim]Total: {len(hosts)} hosts[/dim]")
         if not count:
-            console.print(f"[dim]Check connectivity: mw --list-hosts -c[/dim]")
+            console.print(f"[dim]Check connectivity: dbw --list-hosts -c[/dim]")
         return
 
     # Run task mode
@@ -301,55 +304,63 @@ def main(source, target, source_db, target_db, source_collection, drop_target,
                 console.print("[red]Cancelled[/red]")
                 sys.exit(0)
 
-        copier = MongoAdvancedCopier(source, target)
+        # Auto-detect engines from URI schemes
+        source_engine = EngineFactory.create(source)
+        target_engine = EngineFactory.create(target)
+
+        # Cross-engine copy not supported
+        EngineFactory.check_same_engine(source_engine, target_engine)
 
         try:
-            copier.connect()
+            source_engine.connect()
+            target_engine.connect()
 
-            if source_collection:
-                result = copier.copy_collection_with_indexes(
+            result = target_engine.copy(
+                source_engine=source_engine,
+                source_db=source_db,
+                source_table=source_collection,
+                target_db=target_db,
+                target_table=source_collection,
+                drop_target=drop_target,
+                force=assume_yes,
+                force_python=force_python,
+            )
+
+            # Handle both single-result and multi-result returns
+            if isinstance(result, dict) and all(isinstance(v, dict) for v in result.values()):
+                # Multi-table result
+                total_docs = sum(r['documents_copied'] for r in result.values())
+                console.print(f"[green]✅ Copied {len(result)} {target_engine.table_term_plural}, {format_number(total_docs)} rows[/green]")
+            else:
+                method = result.get('method', 'unknown')
+                console.print(f"[green]✅ Copied {format_number(result['documents_copied'])} rows (method: {method})[/green]")
+
+            # Verification (MongoDB-specific)
+            if verify and source_collection and hasattr(source_engine, 'verify_copy'):
+                verify_result = source_engine.verify_copy(
                     source_db, source_collection,
                     target_db, source_collection,
-                    drop_target=drop_target,
-                    force=assume_yes,
-                    force_python=force_python
+                    target_engine=target_engine
                 )
-                method = result.get('method', 'unknown')
-                console.print(f"[green]✅ Copied {format_number(result['documents_copied'])} documents (method: {method})[/green]")
-            else:
-                results = copier.copy_entire_database(
-                    source_db, target_db,
-                    drop_target=drop_target,
-                    force=assume_yes,
-                    force_python=force_python
-                )
-                total_docs = sum(r['documents_copied'] for r in results.values())
-                console.print(f"[green]✅ Copied {len(results)} collections, {format_number(total_docs)} documents[/green]")
-
-            if verify:
-                # Run verification
-                if source_collection:
-                    verify_result = copier.verify_copy(
-                        source_db, source_collection,
-                        target_db, source_collection
-                    )
-                    if verify_result['count_match'] and verify_result['index_match']:
-                        console.print("[green]✅ Verification passed![/green]")
-                    else:
-                        console.print("[yellow]⚠ Verification issues found[/yellow]")
-                        console.print(f"  Count match: {verify_result['count_match']}")
-                        console.print(f"  Index match: {verify_result['index_match']}")
+                if verify_result['count_match'] and verify_result['index_match']:
+                    console.print("[green]✅ Verification passed![/green]")
+                else:
+                    console.print("[yellow]⚠ Verification issues found[/yellow]")
+                    console.print(f"  Count match: {verify_result['count_match']}")
+                    console.print(f"  Index match: {verify_result['index_match']}")
 
         except Exception as e:
             console.print(f"[red]❌ Error: {e}[/red]")
             sys.exit(1)
         finally:
-            copier.close()
+            source_engine.close()
+            target_engine.close()
 
         return
 
     # Default: interactive mode
-    wizard = MongoWizard()
+    from .wizard import DbWizard
+    wizard = DbWizard()
     wizard.run()
 
 
