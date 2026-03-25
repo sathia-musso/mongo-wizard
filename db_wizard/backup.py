@@ -8,34 +8,32 @@ import os
 import tempfile
 import tarfile
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.table import Table
-from rich.panel import Panel
 from rich import box
 
-from .storage import StorageFactory, StorageBackend, LocalStorage
+from .storage import StorageFactory, LocalStorage
 from .engine import EngineFactory
-from .formatting import format_docs, format_number, format_size
+from .formatting import format_docs, format_size
 from .constants import DEFAULT_CONNECTION_TIMEOUT
 
 console = Console()
 
 
 class BackupManager:
-    """Manages MongoDB backups and restores"""
+    """Manages database backups and restores"""
 
-    def __init__(self, mongo_uri: str, storage_url: str | dict | None = None):
+    def __init__(self, source_uri: str, storage_url: str | dict | None = None):
         """
         Initialize backup manager
 
         Args:
-            mongo_uri: MongoDB connection URI
+            source_uri: Database connection URI
             storage_url: Storage destination (local path, remote URL, or config dict)
         """
-        self.mongo_uri = mongo_uri
+        self.source_uri = source_uri
         self.storage_config = storage_url or os.getcwd()
         self.storage = StorageFactory.create(storage_url)
         self.client = None
@@ -43,7 +41,7 @@ class BackupManager:
     def connect(self) -> bool:
         """Connect to database via engine"""
         try:
-            self.engine = EngineFactory.create(self.mongo_uri)
+            self.engine = EngineFactory.create(self.source_uri)
             self.engine.connect(timeout=DEFAULT_CONNECTION_TIMEOUT)
             self.client = self.engine.client if hasattr(self.engine, 'client') else None
             return True
@@ -369,7 +367,7 @@ class BackupTask:
     @staticmethod
     def create_backup_task(
         name: str,
-        mongo_uri: str,
+        db_uri: str,
         database: str,
         collections: list[str] | None,
         storage_url: str,
@@ -379,7 +377,7 @@ class BackupTask:
         task = {
             'type': 'backup',
             'name': name,
-            'mongo_uri': mongo_uri,
+            'db_uri': db_uri,
             'database': database,
             'collections': collections,
             'storage_url': storage_url,
@@ -392,7 +390,7 @@ class BackupTask:
     @staticmethod
     def create_restore_task(
         name: str,
-        mongo_uri: str,
+        db_uri: str,
         backup_file: str,
         target_database: str | None,
         storage_url: str,
@@ -402,7 +400,7 @@ class BackupTask:
         return {
             'type': 'restore',
             'name': name,
-            'mongo_uri': mongo_uri,
+            'db_uri': db_uri,
             'backup_file': backup_file,
             'target_database': target_database,
             'storage_url': storage_url,

@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any, Self
 
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure, BulkWriteError
+from pymongo.errors import BulkWriteError
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from rich.prompt import Confirm
@@ -63,7 +63,7 @@ class MongoEngine(DatabaseEngine):
             db_count = len(client.list_database_names())
             client.close()
             return True, f"OK ({db_count} databases)"
-        except Exception as e:
+        except Exception as e:  # Catching Exception because PyMongo errors might not be imported if pymongo is missing
             return False, str(e)
 
     # -- Introspection --
@@ -206,7 +206,8 @@ class MongoEngine(DatabaseEngine):
         target_table: str | None,
         drop_target: bool = False,
         force: bool = False,
-        force_python: bool = False
+        force_python: bool = False,
+        **kwargs: Any
     ) -> dict[str, Any]:
         """
         Copy from source MongoEngine into this engine (target).

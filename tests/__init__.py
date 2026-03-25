@@ -1,3 +1,3 @@
 """
-mongo-wizard Test Suite
+db-wizard Test Suite
 """

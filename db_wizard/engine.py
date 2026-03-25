@@ -119,7 +119,8 @@ class DatabaseEngine(ABC):
         target_db: str,
         target_table: str | None,
         drop_target: bool = False,
-        force: bool = False
+        force: bool = False,
+        **kwargs: Any
     ) -> dict[str, Any]:
         """
         Copy from source_engine into this engine (the target).
@@ -165,6 +166,8 @@ class EngineFactory:
         Supported schemes:
             mongodb://, mongodb+srv:// -> MongoEngine
             mysql:// -> MySQLEngine
+            postgres://, postgresql:// -> PostgresEngine
+            redis:// -> RedisEngine
         """
         parsed = urlparse(uri)
         scheme = parsed.scheme.lower()
@@ -177,20 +180,32 @@ class EngineFactory:
             from .engines.mysql import MySQLEngine
             return MySQLEngine(uri)
 
+        elif scheme in ('postgres', 'postgresql'):
+            from .engines.postgres import PostgresEngine
+            return PostgresEngine(uri)
+
+        elif scheme == 'redis':
+            from .engines.redis import RedisEngine
+            return RedisEngine(uri)
+
         else:
             raise ValueError(
                 f"Unsupported database URI scheme: '{scheme}'. "
-                f"Supported: mongodb://, mongodb+srv://, mysql://"
+                f"Supported: mongodb://, mongodb+srv://, mysql://, postgres://, redis://"
             )
 
     @staticmethod
     def detect_scheme(uri: str) -> str:
-        """Return engine type string from URI: 'mongodb' or 'mysql'."""
+        """Return engine type string from URI."""
         parsed = urlparse(uri)
         if parsed.scheme.startswith('mongodb'):
             return 'mongodb'
         elif parsed.scheme == 'mysql':
             return 'mysql'
+        elif parsed.scheme in ('postgres', 'postgresql'):
+            return 'postgres'
+        elif parsed.scheme == 'redis':
+            return 'redis'
         raise ValueError(f"Unknown database scheme: {parsed.scheme}")
 
     @staticmethod

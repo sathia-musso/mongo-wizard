@@ -7,7 +7,7 @@ from typing import Any
 from rich.console import Console
 from .engine import EngineFactory
 from .formatting import format_number
-from .utils import storage_config_to_url, mask_password
+from .utils import mask_password
 
 console = Console()
 
@@ -97,7 +97,7 @@ def run_backup_task(task_config: dict[str, Any]) -> bool:
     from .backup import BackupManager
 
     backup_mgr = BackupManager(
-        task_config['mongo_uri'],
+        task_config['db_uri'],
         task_config['storage_url']
     )
 
@@ -126,7 +126,7 @@ def run_restore_task(task_config: dict[str, Any]) -> bool:
     from .backup import BackupManager
 
     backup_mgr = BackupManager(
-        task_config['mongo_uri'],
+        task_config['db_uri'],
         task_config['storage_url']
     )
 
@@ -155,7 +155,7 @@ def display_task_summary(task_config: dict[str, Any]) -> None:
 
     if task_type == 'backup':
         console.print(f"[bold]Type:[/bold] BACKUP")
-        console.print(f"[bold]Source:[/bold] {mask_password(task_config['mongo_uri'])}")
+        console.print(f"[bold]Source:[/bold] {mask_password(task_config['db_uri'])}")
         console.print(f"[bold]Database:[/bold] {task_config['database']}")
         console.print(f"[bold]Collections:[/bold] {task_config.get('collections', 'ALL')}")
         console.print(f"[bold]Destination:[/bold] {task_config['storage_url']}")
@@ -163,7 +163,7 @@ def display_task_summary(task_config: dict[str, Any]) -> None:
     elif task_type == 'restore':
         console.print(f"[bold]Type:[/bold] RESTORE")
         console.print(f"[bold]Backup:[/bold] {task_config['backup_file']}")
-        console.print(f"[bold]Target:[/bold] {mask_password(task_config['mongo_uri'])}")
+        console.print(f"[bold]Target:[/bold] {mask_password(task_config['db_uri'])}")
         console.print(f"[bold]Database:[/bold] {task_config.get('target_database', 'from backup')}")
         console.print(f"[bold]Drop Target:[/bold] {'Yes' if task_config.get('drop_target') else 'No'}")
         console.print(f"[bold]Storage:[/bold] {task_config['storage_url']}")

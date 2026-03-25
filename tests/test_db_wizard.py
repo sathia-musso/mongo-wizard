@@ -47,7 +47,7 @@ class TestEngineFactory:
     def test_create_unknown_raises(self):
         from db_wizard.engine import EngineFactory
         with pytest.raises(ValueError, match="Unsupported"):
-            EngineFactory.create("postgres://localhost/db")
+            EngineFactory.create("unknown://localhost/db")
 
     def test_detect_scheme_mongodb(self):
         from db_wizard.engine import EngineFactory
@@ -61,7 +61,7 @@ class TestEngineFactory:
     def test_detect_scheme_unknown_raises(self):
         from db_wizard.engine import EngineFactory
         with pytest.raises(ValueError):
-            EngineFactory.detect_scheme("redis://localhost")
+            EngineFactory.detect_scheme("unknown://localhost")
 
     def test_check_same_engine_ok(self):
         from db_wizard.engine import EngineFactory

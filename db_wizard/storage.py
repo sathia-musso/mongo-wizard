@@ -7,7 +7,7 @@ import os
 import subprocess
 import shlex
 import ftplib
-import tempfile
+import contextlib
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -125,7 +125,6 @@ class LocalStorage(StorageBackend):
     def list_files(self, path: str, pattern: str = "*.tar.gz") -> list[dict[str, Any]]:
         """List local files"""
         from pathlib import Path
-        import glob
 
         path_obj = Path(path)
         if not path_obj.exists():
@@ -153,7 +152,7 @@ class LocalStorage(StorageBackend):
             Path(remote_path).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(local_path, remote_path)
             return True
-        except Exception as e:
+        except OSError as e:
             console.print(f"[red]Local copy failed: {e}[/red]")
             return False
 
@@ -163,7 +162,7 @@ class LocalStorage(StorageBackend):
         try:
             shutil.copy2(remote_path, local_path)
             return True
-        except Exception as e:
+        except OSError as e:
             console.print(f"[red]Local copy failed: {e}[/red]")
             return False
 
@@ -185,7 +184,7 @@ class LocalStorage(StorageBackend):
         try:
             Path(path).unlink()
             return True
-        except Exception as e:
+        except OSError as e:
             console.print(f"[red]Delete failed: {e}[/red]")
             return False
 
@@ -212,7 +211,7 @@ class SSHStorage(StorageBackend):
                 return False, error
         except subprocess.TimeoutExpired:
             return False, "Connection timeout"
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             return False, str(e)
 
         # Now test write permissions if path provided
@@ -239,7 +238,7 @@ class SSHStorage(StorageBackend):
 
                 return True, "SSH connection and write permissions OK"
 
-            except Exception as e:
+            except (subprocess.SubprocessError, OSError) as e:
                 return False, f"Write test failed: {str(e)}"
 
         return True, "SSH connection successful"
@@ -282,7 +281,7 @@ class SSHStorage(StorageBackend):
                         continue
 
             return sorted(files, key=lambda x: x['name'], reverse=True)
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             console.print(f"[red]SSH list failed: {e}[/red]")
             return []
 
@@ -293,59 +292,51 @@ class SSHStorage(StorageBackend):
         else:
             return self._upload_with_subprocess(local_path, remote_path)
 
-    def _upload_with_paramiko(self, local_path: str, remote_path: str) -> bool:
-        """Upload using paramiko with real progress tracking"""
+    def _get_sftp_session(self):
+        """Helper to create and return an active SFTP session and its underlying SSH client"""
+        # Create SSH client
+        ssh = paramiko.SSHClient()
+        # Load system known_hosts for host key verification (prevents MITM)
+        ssh.load_system_host_keys()
+        # Warn (but don't reject) for hosts not yet in known_hosts
+        ssh.set_missing_host_key_policy(paramiko.WarningPolicy())
+
+        # Connect
+        connect_kwargs = {
+            'hostname': self.host,
+            'port': self.port,
+            'username': self.user,
+            'timeout': SSH_CONNECT_TIMEOUT,
+        }
+
+        if self.key_path:
+            connect_kwargs['key_filename'] = self.key_path
+        else:
+            # Try default SSH keys if no key specified
+            # os.path already available via top-level import
+            default_keys = [
+                os.path.expanduser('~/.ssh/id_rsa'),
+                os.path.expanduser('~/.ssh/id_ed25519'),
+                os.path.expanduser('~/.ssh/id_ecdsa'),
+                os.path.expanduser('~/.ssh/id_dsa'),
+            ]
+            existing_keys = [k for k in default_keys if os.path.exists(k)]
+            if existing_keys:
+                connect_kwargs['key_filename'] = existing_keys
+
+            # Also try to use SSH agent
+            connect_kwargs['allow_agent'] = True
+            connect_kwargs['look_for_keys'] = True
+
+        ssh.connect(**connect_kwargs)
+        sftp = ssh.open_sftp()
+        return ssh, sftp
+
+    @contextlib.contextmanager
+    def _sftp_session_with_progress(self, description: str, total_size: int):
+        """Context manager that yields an SFTP connection, an SSH connection, and a progress callback"""
+        ssh, sftp = self._get_sftp_session()
         try:
-            # Create SSH client
-            ssh = paramiko.SSHClient()
-            # Load system known_hosts for host key verification (prevents MITM)
-            ssh.load_system_host_keys()
-            # Warn (but don't reject) for hosts not yet in known_hosts
-            ssh.set_missing_host_key_policy(paramiko.WarningPolicy())
-
-            # Connect
-            connect_kwargs = {
-                'hostname': self.host,
-                'port': self.port,
-                'username': self.user,
-                'timeout': SSH_CONNECT_TIMEOUT,
-            }
-
-            if self.key_path:
-                connect_kwargs['key_filename'] = self.key_path
-            else:
-                # Try default SSH keys if no key specified
-                # os.path already available via top-level import
-                default_keys = [
-                    os.path.expanduser('~/.ssh/id_rsa'),
-                    os.path.expanduser('~/.ssh/id_ed25519'),
-                    os.path.expanduser('~/.ssh/id_ecdsa'),
-                    os.path.expanduser('~/.ssh/id_dsa'),
-                ]
-                existing_keys = [k for k in default_keys if os.path.exists(k)]
-                if existing_keys:
-                    connect_kwargs['key_filename'] = existing_keys
-
-                # Also try to use SSH agent
-                connect_kwargs['allow_agent'] = True
-                connect_kwargs['look_for_keys'] = True
-
-            ssh.connect(**connect_kwargs)
-
-            # Create remote directory if needed
-            remote_dir = os.path.dirname(remote_path)
-            if remote_dir and remote_dir not in ('/', '.'):
-                console.print(f"[dim]Creating remote directory: {remote_dir}[/dim]")
-                ssh.exec_command(f'mkdir -p {remote_dir}')
-
-            # Open SFTP session
-            sftp = ssh.open_sftp()
-
-            # Get file size
-            file_size = os.path.getsize(local_path)
-            console.print(f"[dim]Uploading {format_size(file_size)}...[/dim]")
-
-            # Upload with progress
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -353,24 +344,42 @@ class SSHStorage(StorageBackend):
                 DownloadColumn(),
                 console=console
             ) as progress:
-                task = progress.add_task(f"[cyan]Uploading to {self.host}...", total=file_size)
+                task = progress.add_task(description, total=total_size)
 
                 def callback(transferred, total):
                     progress.update(task, completed=transferred)
 
-                sftp.put(local_path, remote_path, callback=callback)
-
-            # Verify upload
-            remote_stat = sftp.stat(remote_path)
-            if remote_stat.st_size != file_size:
-                console.print(f"[red]❌ File size mismatch! Local: {file_size}, Remote: {remote_stat.st_size}[/red]")
-                sftp.close()
-                ssh.close()
-                return False
-
-            console.print(f"[green]✓ Upload verified - {format_size(remote_stat.st_size)} transferred[/green]")
+                yield sftp, ssh, callback
+        finally:
             sftp.close()
             ssh.close()
+
+    def _upload_with_paramiko(self, local_path: str, remote_path: str) -> bool:
+        """Upload using paramiko with real progress tracking"""
+        try:
+            # First create remote directory using a temporary session
+            remote_dir = os.path.dirname(remote_path)
+            if remote_dir and remote_dir not in ('/', '.'):
+                ssh, sftp = self._get_sftp_session()
+                console.print(f"[dim]Creating remote directory: {remote_dir}[/dim]")
+                ssh.exec_command(f'mkdir -p {remote_dir}')
+                sftp.close()
+                ssh.close()
+
+            # Get file size
+            file_size = os.path.getsize(local_path)
+            console.print(f"[dim]Uploading {format_size(file_size)}...[/dim]")
+
+            with self._sftp_session_with_progress(f"[cyan]Uploading to {self.host}...", file_size) as (sftp, ssh, callback):
+                sftp.put(local_path, remote_path, callback=callback)
+                
+                # Verify upload
+                remote_stat = sftp.stat(remote_path)
+                if remote_stat.st_size != file_size:
+                    console.print(f"[red]❌ File size mismatch! Local: {file_size}, Remote: {remote_stat.st_size}[/red]")
+                    return False
+                    
+            console.print(f"[green]✓ Upload verified - {format_size(remote_stat.st_size)} transferred[/green]")
             return True
 
         except Exception as e:
@@ -434,7 +443,7 @@ class SSHStorage(StorageBackend):
             except subprocess.TimeoutExpired:
                 console.print(f"[red]❌ Upload timeout[/red]")
                 return False
-            except Exception as e:
+            except (subprocess.SubprocessError, OSError) as e:
                 console.print(f"[red]SCP upload failed: {e}[/red]")
                 return False
 
@@ -448,72 +457,22 @@ class SSHStorage(StorageBackend):
     def _download_with_paramiko(self, remote_path: str, local_path: str) -> bool:
         """Download using paramiko with real progress tracking"""
         try:
-            # Create SSH client
-            ssh = paramiko.SSHClient()
-            # Load system known_hosts for host key verification (prevents MITM)
-            ssh.load_system_host_keys()
-            # Warn (but don't reject) for hosts not yet in known_hosts
-            ssh.set_missing_host_key_policy(paramiko.WarningPolicy())
-
-            # Connect
-            connect_kwargs = {
-                'hostname': self.host,
-                'port': self.port,
-                'username': self.user,
-                'timeout': SSH_CONNECT_TIMEOUT,
-            }
-
-            if self.key_path:
-                connect_kwargs['key_filename'] = self.key_path
-            else:
-                # Try default SSH keys if no key specified
-                # os.path already available via top-level import
-                default_keys = [
-                    os.path.expanduser('~/.ssh/id_rsa'),
-                    os.path.expanduser('~/.ssh/id_ed25519'),
-                    os.path.expanduser('~/.ssh/id_ecdsa'),
-                    os.path.expanduser('~/.ssh/id_dsa'),
-                ]
-                existing_keys = [k for k in default_keys if os.path.exists(k)]
-                if existing_keys:
-                    connect_kwargs['key_filename'] = existing_keys
-                    console.print(f"[dim]Trying SSH keys: {', '.join(existing_keys)}[/dim]")
-
-                # Also try to use SSH agent
-                connect_kwargs['allow_agent'] = True
-                connect_kwargs['look_for_keys'] = True
-
-            ssh.connect(**connect_kwargs)
-
-            # Open SFTP session
-            sftp = ssh.open_sftp()
-
-            # Get remote file size
+            # Need to get remote file size first
+            ssh, sftp = self._get_sftp_session()
             remote_stat = sftp.stat(remote_path)
             file_size = remote_stat.st_size
+            sftp.close()
+            ssh.close()
+            
             console.print(f"[dim]Downloading {format_size(file_size)}...[/dim]")
 
-            # Download with progress
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                DownloadColumn(),
-                console=console
-            ) as progress:
-                task = progress.add_task(f"[cyan]Downloading from {self.host}...", total=file_size)
-
-                def callback(transferred, total):
-                    progress.update(task, completed=transferred)
-
+            with self._sftp_session_with_progress(f"[cyan]Downloading from {self.host}...", file_size) as (sftp, ssh, callback):
                 sftp.get(remote_path, local_path, callback=callback)
 
             console.print(f"[green]✓ Download complete - {format_size(file_size)}[/green]")
-            sftp.close()
-            ssh.close()
             return True
 
-        except Exception as e:
+        except (OSError, Exception) as e:  # Exception fallback for paramiko errors if imported dynamically
             console.print(f"[red]Download failed: {e}[/red]")
             return False
 
@@ -532,7 +491,7 @@ class SSHStorage(StorageBackend):
                 else:
                     console.print(f"[red]Download failed[/red]")
                     return False
-            except Exception as e:
+            except (subprocess.SubprocessError, OSError) as e:
                 console.print(f"[red]SCP download failed: {e}[/red]")
                 return False
 
@@ -561,7 +520,7 @@ class SSHStorage(StorageBackend):
         try:
             result = subprocess.run(cmd, capture_output=True)
             return result.returncode == 0
-        except Exception as e:
+        except (subprocess.SubprocessError, OSError) as e:
             console.print(f"[red]SSH delete failed: {e}[/red]")
             return False
 
@@ -647,7 +606,7 @@ class FTPStorage(StorageBackend):
 
             ftp.quit()
             return sorted(files, key=lambda x: x['name'], reverse=True)
-        except Exception as e:
+        except (ftplib.all_errors, OSError) as e:
             console.print(f"[red]FTP list failed: {e}[/red]")
             return []
 
@@ -685,7 +644,7 @@ class FTPStorage(StorageBackend):
 
             ftp.quit()
             return True
-        except Exception as e:
+        except (ftplib.all_errors, OSError) as e:
             console.print(f"[red]FTP upload failed: {e}[/red]")
             return False
 
@@ -716,7 +675,7 @@ class FTPStorage(StorageBackend):
 
             ftp.quit()
             return True
-        except Exception as e:
+        except (ftplib.all_errors, OSError) as e:
             console.print(f"[red]FTP download failed: {e}[/red]")
             return False
 
@@ -743,7 +702,7 @@ class FTPStorage(StorageBackend):
             ftp.delete(path)
             ftp.quit()
             return True
-        except Exception as e:
+        except (ftplib.all_errors, OSError) as e:
             console.print(f"[red]FTP delete failed: {e}[/red]")
             return False
 

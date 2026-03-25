@@ -3,7 +3,7 @@ include LICENSE
 include requirements.txt
 include requirements-dev.txt
 include pytest.ini
-recursive-include mongo_wizard *.py
+recursive-include db_wizard *.py
 recursive-include tests *.py
 recursive-include examples *.py
 exclude test_performance.py

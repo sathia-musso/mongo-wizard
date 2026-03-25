@@ -259,4 +259,4 @@ def format_task_table_row(
 
 
 # Re-export for backward compatibility
-from .formatting import format_document_count
+from .formatting import format_document_count  # noqa: F401

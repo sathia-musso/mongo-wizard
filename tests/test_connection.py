@@ -97,4 +97,4 @@ class TestConnection:
     def test_engine_factory_unknown_scheme(self):
         """Test EngineFactory raises for unknown scheme"""
         with pytest.raises(ValueError, match="Unsupported"):
-            EngineFactory.create("postgres://localhost:5432")
+            EngineFactory.create("unknown://localhost")

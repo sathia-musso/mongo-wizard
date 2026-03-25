@@ -90,7 +90,7 @@ class TestMySQLEngineABC:
 
     def test_engine_factory_rejects_unknown(self):
         with pytest.raises(ValueError, match="Unsupported"):
-            EngineFactory.create("postgres://localhost/db")
+            EngineFactory.create("unknown://localhost/db")
 
 
 class TestMySQLEngineConnection:

@@ -25,7 +25,7 @@ from . import __version__
 from .settings import SettingsManager
 from .engine import EngineFactory
 from .task_runner import run_task, display_task_summary
-from .backup import BackupManager, BackupTask
+from .backup import BackupManager
 from .formatting import format_number
 from rich.console import Console
 from rich.table import Table
@@ -37,8 +37,8 @@ console = Console()
 
 @click.command()
 @click.version_option(version=__version__)
-@click.option('-s', '--source', help='Source database URI (mongodb:// or mysql://)')
-@click.option('-t', '--target', help='Target database URI (mongodb:// or mysql://)')
+@click.option('-s', '--source', help='Source database URI (mongodb://, mysql://, postgres://, redis://)')
+@click.option('-t', '--target', help='Target database URI (mongodb://, mysql://, postgres://, redis://)')
 @click.option('--source-db', help='Source database name')
 @click.option('--target-db', help='Target database name (defaults to source-db)')
 @click.option('--source-collection', help='Source collection/table (omit for all)')
@@ -131,10 +131,10 @@ def main(source, target, source_db, target_db, source_collection, drop_target,
 
         console.print(table)
         console.print()
-        console.print(f"[dim]Run a task with: mw --task <name>[/dim]")
-        console.print(f"[dim]Automated mode: mw --task <name> -y[/dim]")
+        console.print(f"[dim]Run a task with: dbw --task <name>[/dim]")
+        console.print(f"[dim]Automated mode: dbw --task <name> -y[/dim]")
         if not count:
-            console.print(f"[dim]Show doc counts: mw --list-tasks -c[/dim]")
+            console.print(f"[dim]Show doc counts: dbw --list-tasks -c[/dim]")
         return
 
     # List hosts mode
@@ -144,7 +144,7 @@ def main(source, target, source_db, target_db, source_collection, drop_target,
 
         if not hosts:
             console.print("[yellow]No saved hosts found[/yellow]")
-            console.print("[dim]Add hosts using interactive mode (mw)[/dim]")
+            console.print("[dim]Add hosts using interactive mode (dbw)[/dim]")
             return
 
         table = Table(title="💾 Saved Hosts", box=box.ROUNDED)
@@ -228,11 +228,11 @@ def main(source, target, source_db, target_db, source_collection, drop_target,
 
         # Extract database from URI
         parts = backup.rsplit('/', 1)
-        mongo_uri = parts[0]
+        db_uri = parts[0]
         database = parts[1]
 
         console.print(f"[cyan]📦 Backup mode[/cyan]")
-        console.print(f"Source: {mongo_uri}")
+        console.print(f"Source: {db_uri}")
         console.print(f"Database: {database}")
         console.print(f"Destination: {backup_to}")
 
@@ -241,7 +241,7 @@ def main(source, target, source_db, target_db, source_collection, drop_target,
                 console.print("[red]Cancelled[/red]")
                 sys.exit(0)
 
-        backup_mgr = BackupManager(mongo_uri, backup_to)
+        backup_mgr = BackupManager(db_uri, backup_to)
         result = backup_mgr.backup_database(database)
 
         if result['success']:

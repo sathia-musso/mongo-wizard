@@ -155,4 +155,8 @@ def _default_port_for_scheme(scheme: str) -> int:
         return 27017
     elif scheme == 'mysql':
         return 3306
+    elif scheme in ('postgres', 'postgresql'):
+        return 5432
+    elif scheme == 'redis':
+        return 6379
     return 0

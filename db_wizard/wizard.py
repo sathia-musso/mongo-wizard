@@ -4,171 +4,25 @@ db-wizard - Interactive tool with saved hosts
 Supports MongoDB and MySQL via engine abstraction.
 """
 
-import json
 import os
-import shutil
-import subprocess
-import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.prompt import Confirm, Prompt, IntPrompt
 from rich.table import Table
 
 from .settings import SettingsManager
-from .engine import EngineFactory
-from .backup import BackupManager, BackupTask
-from .formatting import format_number
+from .flows._common import GoHome
 
 console = Console()
 
-# Config file path
-CONFIG_FILE = Path.home() / '.db_wizard_settings.json'
-
-
-class GoHome(Exception):
-    """Raised when user types 'x' to return to main menu."""
-    pass
-
-
-def _ask(prompt_text: str, **kwargs) -> str:
-    """Prompt.ask wrapper that raises GoHome on 'x' input."""
-    result = Prompt.ask(prompt_text, **kwargs)
-    if result.strip().lower() == 'x':
-        raise GoHome()
-    return result
-
-
-from .utils import mask_password as _mask_password
-
-
-def _test_connection(uri: str, timeout: int = 5000) -> tuple[bool, str]:
-    """Test connection using the appropriate engine."""
-    try:
-        engine = EngineFactory.create(uri)
-        return engine.test_connection(timeout=timeout)
-    except ValueError as e:
-        return False, str(e)
-
-
-def _check_tools(uri: str = "mongodb://localhost") -> dict[str, bool]:
-    """Check CLI tools for the given engine type."""
-    try:
-        engine = EngineFactory.create(uri)
-        return engine.check_tools()
-    except ValueError:
-        return {}
-
 
 def check_system_requirements():
-    """Check system requirements at startup"""
-    console.print("[cyan]🔍 Checking system requirements...[/cyan]\n")
-
-    # Check tools for both engines
-    mongo_tools = _check_tools("mongodb://localhost")
-    mysql_tools = _check_tools("mysql://localhost")
-
-    all_good = True
-    requirements_table = Table(title="System Requirements", box=box.ROUNDED)
-    requirements_table.add_column("Component", style="cyan")
-    requirements_table.add_column("Status", style="green")
-    requirements_table.add_column("Notes", style="yellow")
-
-    # -- Python packages --
-    try:
-        import pymongo
-        requirements_table.add_row("PyMongo", "✅ Installed", f"v{pymongo.version}")
-    except ImportError:
-        requirements_table.add_row("PyMongo", "❌ Missing", "pip install pymongo")
-        all_good = False
-
-    try:
-        import importlib.metadata
-        rich_version = importlib.metadata.version('rich')
-        requirements_table.add_row("Rich", "✅ Installed", f"v{rich_version}")
-    except Exception:
-        requirements_table.add_row("Rich", "⚠️  Missing", "pip install rich")
-
-    # -- MongoDB tools --
-    if mongo_tools.get('mongodump'):
-        try:
-            result = subprocess.run(['mongodump', '--version'], capture_output=True, text=True)
-            version = result.stdout.split('\n')[0] if result.stdout else ""
-            requirements_table.add_row("mongodump", "✅ Installed", version[:40])
-        except Exception:
-            requirements_table.add_row("mongodump", "✅ Installed", "")
-    else:
-        requirements_table.add_row("mongodump", "⚠️  Missing", "brew install mongodb-database-tools")
-
-    if mongo_tools.get('mongorestore'):
-        requirements_table.add_row("mongorestore", "✅ Installed", "")
-    else:
-        requirements_table.add_row("mongorestore", "⚠️  Missing", "Optional")
-
-    if mongo_tools.get('mongosh'):
-        requirements_table.add_row("mongosh", "✅ Installed", "")
-    else:
-        requirements_table.add_row("mongosh", "⚠️  Missing", "Optional")
-
-    # -- MySQL tools --
-    if mysql_tools.get('mysql'):
-        try:
-            result = subprocess.run(['mysql', '--version'], capture_output=True, text=True)
-            version = result.stdout.strip() if result.stdout else ""
-            requirements_table.add_row("mysql", "✅ Installed", version[:40])
-        except Exception:
-            requirements_table.add_row("mysql", "✅ Installed", "")
-    else:
-        requirements_table.add_row("mysql", "⚠️  Missing", "Required for MySQL operations")
-
-    if mysql_tools.get('mysqldump'):
-        try:
-            result = subprocess.run(['mysqldump', '--version'], capture_output=True, text=True)
-            version = result.stdout.strip() if result.stdout else ""
-            requirements_table.add_row("mysqldump", "✅ Installed", version[:40])
-        except Exception:
-            requirements_table.add_row("mysqldump", "✅ Installed", "")
-    else:
-        requirements_table.add_row("mysqldump", "⚠️  Missing", "Required for MySQL backup/copy")
-
-    console.print(requirements_table)
-
-    # Show install hints for missing tools
-    missing_mongo = not mongo_tools.get('mongodump') or not mongo_tools.get('mongorestore')
-    missing_mysql = not mysql_tools.get('mysql') or not mysql_tools.get('mysqldump')
-
-    if missing_mongo or missing_mysql:
-        console.print("\n[yellow]⚠️  Some tools are missing:[/yellow]")
-        if missing_mongo:
-            if sys.platform == "darwin":
-                console.print("  [cyan]MongoDB:[/cyan] brew install mongodb-database-tools")
-            else:
-                console.print("  [cyan]MongoDB:[/cyan] apt-get install mongodb-database-tools")
-        if missing_mysql:
-            if sys.platform == "darwin":
-                console.print("  [cyan]MySQL:[/cyan]   brew install mysql-client")
-            else:
-                console.print("  [cyan]MySQL:[/cyan]   apt-get install mysql-client")
-
-    if not all_good:
-        console.print("\n[red]❌ Missing required Python packages![/red]")
-        console.print("Run: [cyan]pip install pymongo rich[/cyan]")
-        sys.exit(1)
-
-    console.print("\n[green]✅ All required components are installed![/green]")
-
-    if missing_mongo or missing_mysql:
-        if not Confirm.ask("\n[yellow]Continue with missing tools?[/yellow]"):
-            sys.exit(0)
-    else:
-        Prompt.ask("\nPress Enter to continue")
-
-    console.clear()
+    from .system_checks import check_system_requirements as _check_system_requirements
+    _check_system_requirements()
 
 
 class DbWizard:
@@ -176,8 +30,6 @@ class DbWizard:
 
     def __init__(self):
         self.settings_manager = SettingsManager()
-        self.source_client = None
-        self.target_client = None
         self.source_uri = None
         self.target_uri = None
 
@@ -188,11 +40,11 @@ class DbWizard:
     def show_banner(self):
         """Show cool banner"""
         banner = """
-╔══════════════════════════════════════════════╗
-║          🚀 DB-WIZARD 🚀                     ║
-║   Advanced Database Copy & Migration         ║
-║        MongoDB | MySQL                       ║
-╚══════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════╗
+║                🚀 DB-WIZARD 🚀                        ║
+║        Advanced Database Copy & Migration             ║
+║ MongoDB | MySQL | PostgreSQL | Redis (via CLI)        ║
+╚═══════════════════════════════════════════════════════╝
         """
         console.print(banner)
 
@@ -233,11 +85,12 @@ class DbWizard:
             uri = host_value['uri']
             tunnel = host_value.get('ssh_tunnel', '')
             # Detect engine type
-            scheme = "MySQL" if 'mysql://' in uri else "MongoDB"
+            scheme = "MySQL" if 'mysql://' in uri else "PostgreSQL" if 'postgres' in uri else "Redis" if 'redis' in uri else "MongoDB"
             tunnel_label = f" via SSH:{tunnel}" if isinstance(tunnel, str) else f" via SSH:{tunnel.get('host', '?')}" if tunnel else ""
             return f"{name} [dim]({scheme}{tunnel_label})[/dim]"
         else:
-            scheme = "MySQL" if 'mysql://' in host_value else "MongoDB"
+            uri = host_value
+            scheme = "MySQL" if 'mysql://' in uri else "PostgreSQL" if 'postgres' in uri else "Redis" if 'redis' in uri else "MongoDB"
             return f"{name} [dim]({scheme})[/dim]"
 
     def _get_host_uri(self, host_value: str | dict) -> str:
@@ -247,931 +100,61 @@ class DbWizard:
         return host_value
 
     def select_or_add_host(self, purpose: str = "source", filter_scheme: str | None = None) -> str:
-        """Select saved host or add new one. Returns a usable URI.
-
-        Args:
-            purpose: Display label ("source", "target", etc.)
-            filter_scheme: If set, only show hosts matching this scheme ("mongodb" or "mysql").
-        """
-        self.clear_screen()
-        console.print(f"\n[bold cyan]Select {purpose.upper()} host:[/bold cyan]")
-        console.print("[dim]Type 'x' at any prompt to return to main menu[/dim]\n")
-
-        saved_hosts_dict = self.settings_manager.list_hosts()
-
-        # Filter by scheme if requested
-        if filter_scheme:
-            saved_hosts_list = [
-                (name, val) for name, val in saved_hosts_dict.items()
-                if filter_scheme in self._get_host_uri(val)
-            ]
-        else:
-            saved_hosts_list = list(saved_hosts_dict.items())
-
-        # Show saved hosts (no connection test - fast)
-        if saved_hosts_list:
-            for i, (host_name, host_value) in enumerate(saved_hosts_list, 1):
-                display = self._host_display(host_name, host_value)
-                console.print(f"  [green]{i}.[/green] {display}")
-
-        console.print(f"\n  [yellow]{len(saved_hosts_list) + 1}.[/yellow] ➕ Add new host")
-        console.print(f"  [yellow]{len(saved_hosts_list) + 2}.[/yellow] ✏️  Enter URI manually")
-
-        choice_str = _ask("\nChoose option")
-        choice = int(choice_str)
-
-        if choice <= len(saved_hosts_list) and choice >= 1:
-            # Use saved host
-            host_name, host_value = saved_hosts_list[choice - 1]
-            uri = self._resolve_host(host_value)
-            console.print(f"[yellow]Testing connection to {host_name}...[/yellow]")
-            is_online, status = _test_connection(uri)
-            if is_online:
-                console.print(f"[green]✅ Connected: {status}[/green]")
-                return uri
-            else:
-                console.print(f"[red]❌ Cannot connect: {status}[/red]")
-                if Confirm.ask("Use anyway?"):
-                    return uri
-                return self.select_or_add_host(purpose)
-
-        elif choice == len(saved_hosts_list) + 1:
-            # Add new host
-            return self._add_new_host()
-
-        else:
-            # Manual URI
-            uri = _ask("Enter database URI (mongodb:// or mysql://)")
-            console.print("[yellow]Testing connection...[/yellow]")
-            is_online, status = _test_connection(uri)
-            if is_online:
-                console.print(f"[green]✅ Connected: {status}[/green]")
-            else:
-                console.print(f"[red]❌ Cannot connect: {status}[/red]")
-                if not Confirm.ask("Use anyway?"):
-                    return self.select_or_add_host(purpose)
-            return uri
+        """Select saved host or add new one. Returns a usable URI."""
+        from .flows.selection import SelectionFlow
+        return SelectionFlow(self).select_or_add_host(purpose, filter_scheme)
 
     def _add_new_host(self) -> str:
-        """Interactive flow to add a new database host."""
-        console.print("\n[bold cyan]Add new host:[/bold cyan]\n")
+        """Interactive flow to add a new host to settings"""
+        from .flows.selection import SelectionFlow
+        return SelectionFlow(self).add_new_host()
 
-        # Step 1: Engine type
-        console.print("  [cyan]1.[/cyan] MongoDB")
-        console.print("  [cyan]2.[/cyan] MySQL")
-        engine_choice = _ask("Database type", choices=["1", "2"])
+    def select_database(self, engine, purpose: str = "source") -> str:
+        """Select database from list. Accepts a DatabaseEngine."""
+        from .flows.selection import SelectionFlow
+        return SelectionFlow(self).select_database(engine, purpose)
 
-        if engine_choice == "1":
-            default_uri = "mongodb://localhost:27017"
-            scheme_label = "MongoDB"
-        else:
-            default_uri = "mysql://user:pass@localhost:3306/dbname"
-            scheme_label = "MySQL"
-
-        # Step 2: Name and URI
-        name = _ask("Host name (e.g., 'production', 'staging')")
-        uri = _ask(f"{scheme_label} URI", default=default_uri)
-
-        # Step 3: SSH tunnel?
-        ssh_tunnel = None
-        if Confirm.ask("\n[cyan]Is this host behind an SSH tunnel?[/cyan]", default=False):
-            console.print("[dim]Tip: if you have the host in ~/.ssh/config, just enter its name[/dim]")
-            ssh_host = _ask("SSH host (e.g., 'myserver' or 'user@server.com')")
-
-            # Check if it's a simple hostname (from ssh config) or needs more details
-            if '@' in ssh_host or Confirm.ask("Need to specify SSH user/port/key?", default=False):
-                if '@' in ssh_host:
-                    ssh_user, ssh_host_name = ssh_host.split('@', 1)
-                else:
-                    ssh_host_name = ssh_host
-                    ssh_user = _ask("SSH user", default="root")
-                ssh_port = IntPrompt.ask("SSH port", default=22)
-                key_path = _ask("SSH private key path (Enter to skip)", default="")
-                # Catch the classic .pub mistake
-                if key_path.endswith('.pub'):
-                    console.print("[yellow]⚠ That's a public key (.pub). SSH needs the private key.[/yellow]")
-                    key_path = key_path.removesuffix('.pub')
-                    console.print(f"[dim]Using: {key_path}[/dim]")
-
-                ssh_tunnel = {
-                    'host': ssh_host_name,
-                    'user': ssh_user,
-                    'port': ssh_port,
-                }
-                if key_path:
-                    ssh_tunnel['key_path'] = key_path
-            else:
-                # Simple hostname - uses ~/.ssh/config
-                ssh_tunnel = ssh_host
-
-        # Step 4: Test connection
-        test_uri = uri
-        if ssh_tunnel:
-            console.print("[yellow]Opening SSH tunnel and testing...[/yellow]")
-            try:
-                from .tunnel import open_tunnel
-                test_uri = open_tunnel(uri, ssh_tunnel)
-            except Exception as e:
-                console.print(f"[red]❌ SSH tunnel failed: {e}[/red]")
-                if not Confirm.ask("Save host anyway (without tunnel test)?"):
-                    return self._add_new_host()
-        else:
-            console.print("[yellow]Testing connection...[/yellow]")
-
-        is_online, status = _test_connection(test_uri)
-        if is_online:
-            console.print(f"[green]✅ Connection successful: {status}[/green]")
-        else:
-            console.print(f"[red]❌ Connection failed: {status}[/red]")
-            if not Confirm.ask("Save anyway?"):
-                return self._add_new_host()
-
-        # Save
-        self.settings_manager.add_host(name, uri, ssh_tunnel=ssh_tunnel)
-        console.print(f"[green]✅ Saved host '{name}'[/green]")
-
-        # Return the working URI (tunneled if needed)
-        if ssh_tunnel and is_online:
-            return test_uri
-        return uri
-
-    def select_database(self, engine_or_client, purpose: str = "source") -> str:
-        """Select database from list. Accepts a DatabaseEngine or legacy MongoClient."""
-        self.clear_screen()
-        console.print(f"\n[bold cyan]Select {purpose.upper()} database:[/bold cyan]\n")
-
-        databases = []
-        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as progress:
-            task = progress.add_task("Loading databases...", total=None)
-
-            # Use engine interface if available, otherwise fall back to MongoClient
-            if hasattr(engine_or_client, 'list_databases'):
-                databases = engine_or_client.list_databases()
-            else:
-                # Legacy MongoClient fallback
-                from .constants import MONGO_SYSTEM_DATABASES
-                client = engine_or_client
-                for db_name in client.list_database_names():
-                    if db_name in MONGO_SYSTEM_DATABASES:
-                        continue
-                    db = client[db_name]
-                    collections = db.list_collection_names()
-                    stats = db.command("dbStats")
-                    size_mb = stats.get('dataSize', 0) / (1024 * 1024)
-                    databases.append({
-                        'name': db_name,
-                        'tables_count': len(collections),
-                        'size_mb': size_mb
-                    })
-
-            progress.remove_task(task)
-
-        # Detect term from engine
-        table_term = getattr(engine_or_client, 'table_term_plural', 'collections').capitalize()
-
-        # Display
-        tbl = Table(title="📚 Available Databases", box=box.ROUNDED)
-        tbl.add_column("#", style="cyan", width=4)
-        tbl.add_column("Database", style="green")
-        tbl.add_column(table_term, style="yellow", justify="right")
-        tbl.add_column("Size (MB)", style="magenta", justify="right")
-
-        for i, db in enumerate(databases, 1):
-            tbl.add_row(
-                str(i),
-                db['name'],
-                str(db.get('tables_count', db.get('collections', 0))),
-                f"{db['size_mb']:.1f}"
-            )
-
-        console.print(tbl)
-
-        if not databases:
-            console.print("[yellow]No databases found![/yellow]")
-            return _ask("Enter database name manually")
-
-        while True:
-            choice_str = _ask("\nSelect database")
-            try:
-                choice = int(choice_str)
-                if 1 <= choice <= len(databases):
-                    return databases[choice - 1]['name']
-                else:
-                    console.print(f"[red]Please enter a number between 1 and {len(databases)}[/red]")
-            except ValueError:
-                console.print("[red]Please enter a valid number[/red]")
-
-    def select_collection(self, engine_or_client, database: str, purpose: str = "source", allow_all: bool = True,
+    def select_collection(self, engine, database: str, purpose: str = "source", allow_all: bool = True,
                           allow_multiple: bool = False) -> Any | None:
-        """Select collection/table from database. Accepts a DatabaseEngine or legacy MongoClient."""
-        # Detect terminology from engine
-        term = getattr(engine_or_client, 'table_term', 'collection')
-        term_plural = getattr(engine_or_client, 'table_term_plural', 'collections')
-
-        self.clear_screen()
-        console.print(f"\n[bold cyan]Select {purpose.upper()} {term} from {database}:[/bold cyan]\n")
-
-        collections = []
-
-        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}")) as progress:
-            task = progress.add_task(f"Loading {term_plural}...", total=None)
-
-            if hasattr(engine_or_client, 'list_tables'):
-                # Engine interface
-                for t in engine_or_client.list_tables(database):
-                    collections.append({
-                        'name': t['name'],
-                        'documents': t.get('rows', 0),
-                        'indexes': t.get('indexes', 0),
-                    })
-            else:
-                # Legacy MongoClient fallback
-                db = engine_or_client[database]
-                for coll_name in db.list_collection_names():
-                    coll = db[coll_name]
-                    count = coll.estimated_document_count()
-                    indexes = list(coll.list_indexes())
-                    collections.append({
-                        'name': coll_name,
-                        'documents': count,
-                        'indexes': len(indexes)
-                    })
-
-            progress.remove_task(task)
-
-        # Sort by row count
-        collections.sort(key=lambda x: x['documents'], reverse=True)
-
-        # Display
-        table = Table(title=f"📁 {term_plural.capitalize()} in {database}", box=box.ROUNDED)
-        table.add_column("#", style="cyan", width=4)
-        table.add_column(term.capitalize(), style="green")
-        table.add_column("Rows", style="yellow", justify="right")
-        table.add_column("Indexes", style="magenta", justify="right")
-
-        if allow_all:
-            table.add_row("0", "[bold]ALL COLLECTIONS[/bold]", format_number(sum(c['documents'] for c in collections)), "-")
-
-        for i, coll in enumerate(collections, 1):
-            table.add_row(
-                str(i),
-                coll['name'],
-                f"{format_number(coll['documents'])}",
-                str(coll['indexes'])
-            )
-
-        console.print(table)
-
-        max_val = len(collections)
-        min_val = 0 if allow_all else 1
-
-        if allow_multiple:
-            console.print("\n[yellow]💡 Multiple selection mode:[/yellow]")
-            console.print("[dim]Enter numbers separated by commas (e.g., 1,3,5) or ranges (e.g., 1-5)[/dim]")
-            console.print("[dim]Enter 0 for ALL collections, or leave empty to cancel[/dim]")
-
-            selection = Prompt.ask("\nSelect collections")
-
-            if not selection:
-                return []
-
-            if selection == "0":
-                return None  # All collections
-
-            selected = []
-            try:
-                # Parse selection (supports: "1,2,3" or "1-5" or "1,3-5,7")
-                parts = selection.split(',')
-                for part in parts:
-                    part = part.strip()
-                    if '-' in part:
-                        # Range
-                        start, end = part.split('-')
-                        start, end = int(start.strip()), int(end.strip())
-                        for i in range(start, end + 1):
-                            if 1 <= i <= len(collections):
-                                selected.append(collections[i - 1]['name'])
-                    else:
-                        # Single number
-                        idx = int(part)
-                        if 1 <= idx <= len(collections):
-                            selected.append(collections[idx - 1]['name'])
-
-                # Remove duplicates while preserving order
-                seen = set()
-                selected = [x for x in selected if not (x in seen or seen.add(x))]
-
-                if selected:
-                    console.print(
-                        f"[green]✅ Selected {len(selected)} collections: {', '.join(selected[:3])}{'...' if len(selected) > 3 else ''}[/green]")
-                    return selected
-                else:
-                    console.print("[red]No valid collections selected[/red]")
-                    return []
-
-            except Exception as e:
-                console.print(f"[red]Invalid selection: {e}[/red]")
-                return []
-
-        else:
-            # Single selection mode
-            while True:
-                choice_str = Prompt.ask("\nSelect collection")
-                try:
-                    choice = int(choice_str)
-                    if min_val <= choice <= max_val:
-                        if choice == 0:
-                            return None  # All collections
-                        return collections[choice - 1]['name']
-                    else:
-                        console.print(f"[red]Please enter a number between {min_val} and {max_val}[/red]")
-                except ValueError:
-                    console.print("[red]Please enter a valid number[/red]")
+        """Select collection/table from database. Accepts a DatabaseEngine."""
+        from .flows.selection import SelectionFlow
+        return SelectionFlow(self).select_collection(engine, database, purpose, allow_all, allow_multiple)
 
     def copy_wizard(self):
         """Interactive copy wizard"""
-        self.clear_screen()
-        console.print(Panel("[bold cyan]📋 COPY WIZARD[/bold cyan]", style="cyan"))
-
-        # Step 1: Select source
-        console.print("\n[bold]STEP 1: SELECT SOURCE[/bold]")
-        self.source_uri = self.select_or_add_host("source")
-        self.source_engine = EngineFactory.create(self.source_uri)
-        self.source_engine.connect()
-
-        source_db = self.select_database(self.source_engine, "source")
-
-        # Ask if user wants single or multiple collection selection
-        term_plural = self.source_engine.table_term_plural
-        if Confirm.ask(f"\n[cyan]Do you want to select multiple {term_plural}?[/cyan]"):
-            source_collection = self.select_collection(self.source_engine, source_db, "source", allow_all=True,
-                                                       allow_multiple=True)
-        else:
-            source_collection = self.select_collection(self.source_engine, source_db, "source", allow_all=True,
-                                                       allow_multiple=False)
-
-        # Step 2: Select target (filtered to same engine type)
-        console.print("\n[bold]STEP 2: SELECT TARGET[/bold]")
-        source_scheme = self.source_engine.scheme
-        self.target_uri = self.select_or_add_host("target", filter_scheme=source_scheme)
-        self.target_engine = EngineFactory.create(self.target_uri)
-
-        self.target_engine.connect()
-
-        # Ask if want same or different database name
-        if Confirm.ask(f"\n[yellow]Use same database name '{source_db}' on target?[/yellow]", default=True):
-            target_db = source_db
-        else:
-            target_db = Prompt.ask("Enter target database name", default=f"{source_db}_copy")
-
-        target_collection = None
-        if isinstance(source_collection, list):
-            # Multi-collection: always use same names on target
-            target_collection = source_collection
-            console.print(f"[dim]Target collections will use the same names as source ({len(source_collection)} collections)[/dim]")
-        elif source_collection:
-            if Confirm.ask(f"[yellow]Use same collection name '{source_collection}' on target?[/yellow]", default=True):
-                target_collection = source_collection
-            else:
-                target_collection = Prompt.ask("Enter target collection name", default=f"{source_collection}_copy")
-
-        # Step 3: Options
-        console.print("\n[bold]STEP 3: COPY OPTIONS[/bold]")
-        is_mongo = self.source_engine.scheme == 'mongodb'
-
-        drop_target = Confirm.ask("[yellow]Drop target before copying?[/yellow]", default=False)
-        create_backup = False
-        if drop_target and is_mongo:
-            # Backup before drop only makes sense for MongoDB (internal collection copy)
-            # MySQL drop is handled by mysqldump's DROP TABLE IF EXISTS
-            create_backup = Confirm.ask("[cyan]💾 Create backup before dropping?[/cyan]", default=True)
-        copy_indexes = True
-        if is_mongo:
-            # MySQL: mysqldump always includes indexes, no choice needed
-            copy_indexes = Confirm.ask("[cyan]Copy indexes?[/cyan]", default=True)
-        verify = False
-        if is_mongo:
-            # Verification is MongoDB-specific (checksum + sample comparison)
-            verify = Confirm.ask("[green]Verify after copy?[/green]", default=True)
-
-        # Summary
-        self.clear_screen()
-        console.print(Panel("[bold green]📋 COPY SUMMARY[/bold green]", style="green"))
-
-        summary = Table(box=box.SIMPLE)
-        summary.add_column("Property", style="cyan")
-        summary.add_column("Value", style="yellow")
-
-        summary.add_row("Source", f"{_mask_password(self.source_uri)}")
-        summary.add_row("Source DB", source_db)
-        if isinstance(source_collection, list):
-            summary.add_row("Source Collections", f"{len(source_collection)} selected")
-        else:
-            summary.add_row("Source Collection", source_collection or "ALL")
-        summary.add_row("", "")
-        summary.add_row("Target", f"{_mask_password(self.target_uri)}")
-        summary.add_row("Target DB", target_db)
-        if isinstance(source_collection, list):
-            summary.add_row("Target Collections", "Same names as source")
-        else:
-            summary.add_row("Target Collection", target_collection or "ALL")
-        summary.add_row("", "")
-        summary.add_row("Drop Target", "YES" if drop_target else "NO")
-        if drop_target and create_backup:
-            summary.add_row("Create Backup", "YES 💾")
-        summary.add_row("Copy Indexes", "YES" if copy_indexes else "NO")
-        summary.add_row("Verify", "YES" if verify else "NO")
-
-        console.print(summary)
-
-        # Get document counts for warning
-        source_count = None
-        target_count = None
-        try:
-            if isinstance(source_collection, list):
-                source_count = sum(
-                    self.source_engine.count_rows(source_db, c) for c in source_collection
-                )
-                target_tables = [t['name'] for t in self.target_engine.list_tables(target_db)]
-                target_count = sum(
-                    self.target_engine.count_rows(target_db, c)
-                    for c in source_collection if c in target_tables
-                )
-            elif source_collection:
-                source_count = self.source_engine.count_rows(source_db, source_collection)
-                target_tables = [t['name'] for t in self.target_engine.list_tables(target_db)]
-                if target_collection in target_tables:
-                    target_count = self.target_engine.count_rows(target_db, target_collection)
-            else:
-                source_count = sum(t['rows'] for t in self.source_engine.list_tables(source_db))
-                try:
-                    target_count = sum(t['rows'] for t in self.target_engine.list_tables(target_db))
-                except Exception:
-                    target_count = None
-        except Exception:
-            # Silently ignore count errors - not critical for confirmation
-            pass
-
-        if drop_target:
-            console.print("\n[bold red]⚠️  WARNING: This will DELETE existing target data![/bold red]")
-            if source_count is not None:
-                console.print(f"[cyan]📊 Source has {format_number(source_count)} documents[/cyan]")
-            if target_count is not None and target_count > 0:
-                console.print(f"[red]🗑️  Target has {format_number(target_count)} documents that will be DELETED![/red]")
-        else:
-            # Show counts even without drop
-            if source_count is not None:
-                console.print(f"\n[cyan]📊 Source: {format_number(source_count)} documents[/cyan]")
-            if target_count is not None and target_count > 0:
-                console.print(f"[yellow]📊 Target: {format_number(target_count)} existing documents (will merge)[/yellow]")
-
-        if not Confirm.ask("\n[bold yellow]Proceed with copy?[/bold yellow]"):
-            console.print("[red]✗ Cancelled[/red]")
-            return
-
-        # Execute copy using engine interface
-        console.print("\n[cyan]Starting copy operation...[/cyan]")
-
-        source_engine = EngineFactory.create(self.source_uri)
-        target_engine = EngineFactory.create(self.target_uri)
-        source_engine.connect()
-        target_engine.connect()
-
-        try:
-            if isinstance(source_collection, list):
-                # Multiple collections
-                console.print(f"[cyan]📋 Copying {len(source_collection)} {target_engine.table_term_plural}[/cyan]")
-
-                # Create backup if requested (MongoDB-specific)
-                if create_backup and drop_target and hasattr(target_engine, 'backup_before_copy'):
-                    for coll in source_collection:
-                        if coll in [t['name'] for t in target_engine.list_tables(target_db)]:
-                            target_engine.backup_before_copy(target_db, coll)
-
-                results = {}
-                for coll_name in source_collection:
-                    console.print(f"\n[bold]📁 Copying: {coll_name}[/bold]")
-                    result = target_engine.copy(
-                        source_engine=source_engine,
-                        source_db=source_db, source_table=coll_name,
-                        target_db=target_db, target_table=coll_name,
-                        drop_target=drop_target
-                    )
-                    results[coll_name] = result
-
-                total_docs = sum(r['documents_copied'] for r in results.values())
-                total_indexes = sum(r.get('indexes_created', 0) for r in results.values())
-                console.print(f"[green]✓ Copied {len(results)} {target_engine.table_term_plural}[/green]")
-                console.print(f"[green]✓ Total: {format_number(total_docs)} rows, {total_indexes} indexes[/green]")
-
-            elif source_collection:
-                # Single collection/table
-                if create_backup and drop_target and hasattr(target_engine, 'backup_before_copy'):
-                    target_tables = [t['name'] for t in target_engine.list_tables(target_db)]
-                    if target_collection in target_tables:
-                        target_engine.backup_before_copy(target_db, target_collection)
-
-                result = target_engine.copy(
-                    source_engine=source_engine,
-                    source_db=source_db, source_table=source_collection,
-                    target_db=target_db, target_table=target_collection,
-                    drop_target=drop_target
-                )
-                console.print(f"[green]✓ Copied {format_number(result['documents_copied'])} rows[/green]")
-                console.print(f"[green]✓ Created {result.get('indexes_created', 0)} indexes[/green]")
-
-                if verify and hasattr(source_engine, 'verify_copy'):
-                    verification = source_engine.verify_copy(
-                        source_db, source_collection,
-                        target_db, target_collection,
-                        target_engine=target_engine
-                    )
-                    if verification['count_match']:
-                        console.print("[green]✓ Verification passed![/green]")
-                    else:
-                        console.print(
-                            f"[yellow]⚠ Count mismatch: {verification['source_count']} vs {verification['target_count']}[/yellow]")
-
-            else:
-                # Entire database
-                results = target_engine.copy(
-                    source_engine=source_engine,
-                    source_db=source_db, source_table=None,
-                    target_db=target_db, target_table=None,
-                    drop_target=drop_target
-                )
-                if isinstance(results, dict) and all(isinstance(v, dict) for v in results.values()):
-                    total_docs = sum(r['documents_copied'] for r in results.values())
-                    console.print(f"[green]✓ Copied {len(results)} {target_engine.table_term_plural}, {format_number(total_docs)} total rows[/green]")
-                else:
-                    console.print(f"[green]✓ Copy completed[/green]")
-
-        except Exception as e:
-            console.print(f"[red]✗ Error: {e}[/red]")
-
-        finally:
-            source_engine.close()
-            target_engine.close()
-
-        console.print("\n[bold green]✅ COPY COMPLETE![/bold green]")
-
-        # Ask if user wants to save this task
-        if Confirm.ask("\n[cyan]💾 Would you like to save this task for future use?[/cyan]"):
-            task_name = Prompt.ask("Enter a name for this task")
-
-            task_config = {
-                'source_uri': self.source_uri,
-                'target_uri': self.target_uri,
-                'source_db': source_db,
-                'target_db': target_db,
-                'source_collection': source_collection,
-                'target_collection': target_collection,
-                'drop_target': drop_target,
-                'copy_indexes': copy_indexes,
-                'verify': verify
-            }
-
-            if self.settings_manager.add_task(task_name, task_config):
-                console.print(f"[green]✅ Task '{task_name}' saved![/green]")
-                console.print(f"[dim]Run it anytime with: db-wizard --task {task_name}[/dim]")
-
-        Prompt.ask("\nPress Enter to continue")
+        from .flows.copy_flow import CopyWizardFlow
+        flow = CopyWizardFlow(self)
+        flow.run()
 
     def manage_hosts(self):
         """Manage saved hosts"""
-        while True:
-            self.clear_screen()
-            console.print(Panel("[bold cyan]💾 MANAGE SAVED HOSTS[/bold cyan]", style="cyan"))
-
-            saved_hosts_dict = self.settings_manager.list_hosts()  # Returns Dict[str, str]
-            saved_hosts_list = list(saved_hosts_dict.items())  # Convert to list of (name, uri) tuples
-
-            if not saved_hosts_list:
-                console.print("[yellow]No saved hosts yet![/yellow]")
-            else:
-                table = Table(title="Saved Hosts", box=box.ROUNDED)
-                table.add_column("#", style="cyan", width=4)
-                table.add_column("Name", style="green")
-                table.add_column("Type", style="magenta", width=8)
-                table.add_column("URI", style="yellow")
-                table.add_column("Tunnel", style="dim")
-
-                for i, (host_name, host_value) in enumerate(saved_hosts_list, 1):
-                    if isinstance(host_value, dict):
-                        uri = host_value.get('uri', '')
-                        tunnel = host_value.get('ssh_tunnel', '')
-                        tunnel_str = tunnel if isinstance(tunnel, str) else tunnel.get('host', '') if tunnel else ''
-                    else:
-                        uri = host_value
-                        tunnel_str = ''
-                    engine_type = "MySQL" if 'mysql://' in uri else "MongoDB"
-                    display_uri = _mask_password(uri)
-                    table.add_row(str(i), host_name, engine_type, display_uri, tunnel_str)
-
-                console.print(table)
-
-            console.print("\n[bold]Options:[/bold]")
-            console.print("  [cyan]1.[/cyan] Add new host")
-            console.print("  [cyan]2.[/cyan] Remove host")
-            console.print("  [cyan]3.[/cyan] Test host connection")
-            console.print("  [cyan]4.[/cyan] Back to main menu")
-
-            choice = Prompt.ask("Choose option", choices=["1", "2", "3", "4"])
-
-            if choice == "1":
-                # Add host - use the new flow
-                self._add_new_host()
-                Prompt.ask("Press Enter to continue")
-
-            elif choice == "2" and saved_hosts_list:
-                # Remove host
-                while True:
-                    try:
-                        idx = int(Prompt.ask("Select host to remove"))
-                        if 1 <= idx <= len(saved_hosts_list):
-                            break
-                        console.print(f"[red]Please enter a number between 1 and {len(saved_hosts_list)}[/red]")
-                    except ValueError:
-                        console.print("[red]Please enter a valid number[/red]")
-                host_name, _ = saved_hosts_list[idx - 1]
-                if Confirm.ask(f"Remove '{host_name}'?"):
-                    if self.settings_manager.delete_host(host_name):
-                        console.print(f"[green]✓ Removed '{host_name}'[/green]")
-                Prompt.ask("Press Enter to continue")
-
-            elif choice == "3" and saved_hosts_list:
-                # Test connection
-                while True:
-                    try:
-                        idx = int(Prompt.ask("Select host to test"))
-                        if 1 <= idx <= len(saved_hosts_list):
-                            break
-                        console.print(f"[red]Please enter a number between 1 and {len(saved_hosts_list)}[/red]")
-                    except ValueError:
-                        console.print("[red]Please enter a valid number[/red]")
-                host_name, host_value = saved_hosts_list[idx - 1]
-                console.print(f"[yellow]Testing {host_name}...[/yellow]")
-                try:
-                    test_uri = self._resolve_host(host_value)
-                    success, msg = _test_connection(test_uri)
-                    if success:
-                        console.print(f"[green]✓ Connection OK! {msg}[/green]")
-                    else:
-                        console.print(f"[red]✗ Connection failed: {msg}[/red]")
-                except Exception as e:
-                    console.print(f"[red]✗ Connection failed: {e}[/red]")
-                Prompt.ask("Press Enter to continue")
-
-            elif choice == "4":
-                break
+        from .flows.manage_hosts import ManageHostsFlow
+        flow = ManageHostsFlow(self)
+        flow.run()
 
     def manage_storages(self):
         """Manage saved storage configurations"""
-        while True:
-            self.clear_screen()
-            console.print(Panel("[bold cyan]🗄️ MANAGE STORAGE CONFIGURATIONS[/bold cyan]", style="cyan"))
-
-            saved_storages = self.settings_manager.list_storages()
-            storage_list = list(saved_storages.items())
-
-            if not storage_list:
-                console.print("[yellow]No saved storage configurations yet![/yellow]")
-            else:
-                table = Table(title="Saved Storage Configs", box=box.ROUNDED)
-                table.add_column("#", style="cyan", width=4)
-                table.add_column("Name", style="green")
-                table.add_column("Type", style="yellow")
-                table.add_column("Details", style="magenta")
-
-                for i, (name, config) in enumerate(storage_list, 1):
-                    storage_type = config.get('type', 'unknown')
-
-                    # Format details based on type
-                    if storage_type == 'ssh':
-                        details = f"{config.get('user')}@{config.get('host')}:{config.get('path', '/')}"
-                    elif storage_type == 'ftp':
-                        details = f"{config.get('user')}@{config.get('host')}:{config.get('path', '/')}"
-                    elif storage_type == 'local':
-                        details = config.get('path', '/')
-                    else:
-                        details = "Unknown"
-
-                    table.add_row(str(i), name, storage_type.upper(), details)
-
-                console.print(table)
-
-            console.print("\n[bold]Options:[/bold]")
-            console.print("  [cyan]1.[/cyan] Add new storage")
-            console.print("  [cyan]2.[/cyan] Test storage connection")
-            console.print("  [cyan]3.[/cyan] Remove storage")
-            console.print("  [cyan]4.[/cyan] Back to main menu")
-
-            choice = Prompt.ask("Choose option", choices=["1", "2", "3", "4"])
-
-            if choice == "1":
-                # Add storage
-                console.print("\n[bold]Storage types:[/bold]")
-                console.print("  [cyan]1.[/cyan] Local filesystem")
-                console.print("  [cyan]2.[/cyan] SSH/SCP")
-                console.print("  [cyan]3.[/cyan] FTP")
-
-                storage_type = Prompt.ask("Choose storage type", choices=["1", "2", "3"])
-
-                name = Prompt.ask("\nStorage configuration name")
-
-                if storage_type == "1":
-                    # Local storage
-                    path = Prompt.ask("Local path", default="/tmp/backups")
-                    config = {
-                        "type": "local",
-                        "name": name,
-                        "path": path
-                    }
-
-                elif storage_type == "2":
-                    # SSH storage
-                    host = Prompt.ask("SSH host")
-                    user = Prompt.ask("SSH user", default="root")
-                    port = IntPrompt.ask("SSH port", default=22)
-                    path = Prompt.ask("Remote path", default="/backups")
-                    key_path = Prompt.ask("SSH key path (optional, press Enter to skip)", default="")
-
-                    config = {
-                        "type": "ssh",
-                        "name": name,
-                        "host": host,
-                        "user": user,
-                        "port": port,
-                        "path": path
-                    }
-                    if key_path:
-                        config["key_path"] = key_path
-
-                elif storage_type == "3":
-                    # FTP storage
-                    host = Prompt.ask("FTP host")
-                    user = Prompt.ask("FTP user")
-                    password = Prompt.ask("FTP password", password=True)
-                    port = IntPrompt.ask("FTP port", default=21)
-                    path = Prompt.ask("Remote path", default="/")
-
-                    config = {
-                        "type": "ftp",
-                        "name": name,
-                        "host": host,
-                        "user": user,
-                        "password": password,
-                        "port": port,
-                        "path": path
-                    }
-
-                self.settings_manager.add_storage(name, config)
-                console.print(f"[green]✓ Added storage configuration '{name}'[/green]")
-
-                # Test connection
-                if Confirm.ask("Test connection now?"):
-                    from .storage import StorageFactory
-                    try:
-                        storage = StorageFactory.create(config)
-                        if hasattr(storage, 'test_connection'):
-                            test_path = config.get('path', '/')
-                            success, msg = storage.test_connection(test_path)
-                            if success:
-                                console.print(f"[green]✓ {msg}[/green]")
-                            else:
-                                console.print(f"[red]✗ {msg}[/red]")
-                        else:
-                            console.print("[green]✓ Local storage ready[/green]")
-                    except Exception as e:
-                        console.print(f"[red]✗ Error: {e}[/red]")
-
-                Prompt.ask("Press Enter to continue")
-
-            elif choice == "2" and storage_list:
-                # Test storage
-                while True:
-                    try:
-                        idx = int(Prompt.ask("Select storage to test"))
-                        if 1 <= idx <= len(storage_list):
-                            break
-                        console.print(f"[red]Please enter a number between 1 and {len(storage_list)}[/red]")
-                    except ValueError:
-                        console.print("[red]Please enter a valid number[/red]")
-
-                name, config = storage_list[idx - 1]
-                console.print(f"[yellow]Testing {name}...[/yellow]")
-
-                from .storage import StorageFactory
-                try:
-                    storage = StorageFactory.create(config)
-                    if hasattr(storage, 'test_connection'):
-                        success, msg = storage.test_connection()
-                        if success:
-                            console.print(f"[green]✓ {msg}[/green]")
-                        else:
-                            console.print(f"[red]✗ {msg}[/red]")
-                    else:
-                        # Local storage - test if path exists/writable
-                        import os
-                        path = config.get('path', '/')
-                        if os.path.exists(path) and os.access(path, os.W_OK):
-                            console.print(f"[green]✓ Local path {path} is accessible[/green]")
-                        else:
-                            console.print(f"[red]✗ Local path {path} not accessible[/red]")
-                except Exception as e:
-                    console.print(f"[red]✗ Error: {e}[/red]")
-
-                Prompt.ask("Press Enter to continue")
-
-            elif choice == "3" and storage_list:
-                # Remove storage
-                while True:
-                    try:
-                        idx = int(Prompt.ask("Select storage to remove"))
-                        if 1 <= idx <= len(storage_list):
-                            break
-                        console.print(f"[red]Please enter a number between 1 and {len(storage_list)}[/red]")
-                    except ValueError:
-                        console.print("[red]Please enter a valid number[/red]")
-
-                name, _ = storage_list[idx - 1]
-                if Confirm.ask(f"Remove storage '{name}'?"):
-                    if self.settings_manager.delete_storage(name):
-                        console.print(f"[green]✓ Removed '{name}'[/green]")
-                Prompt.ask("Press Enter to continue")
-
-            elif choice == "4":
-                break
+        from .flows.manage_storages import ManageStoragesFlow
+        flow = ManageStoragesFlow(self)
+        flow.run()
 
     def browse_database(self):
         """Browse database interactively"""
-        self.clear_screen()
-        console.print(Panel("[bold cyan]🔍 DATABASE BROWSER[/bold cyan]", style="cyan"))
-
-        uri = self.select_or_add_host("browse")
-        engine = EngineFactory.create(uri)
-        engine.connect()
-
-        db_name = self.select_database(engine, "browse")
-
-        while True:
-            self.clear_screen()
-            console.print(f"[bold cyan]📚 Browsing: {db_name}[/bold cyan]\n")
-
-            coll_name = self.select_collection(engine, db_name, "browse", allow_all=False)
-            if not coll_name:
-                break
-
-            # Show table/collection info
-            term = engine.table_term
-            row_count = engine.count_rows(db_name, coll_name)
-            console.print(f"\n[bold]📁 {term.capitalize()}: {coll_name}[/bold]")
-            console.print(f"Rows: {format_number(row_count)}")
-
-            # Show sample data
-            if Confirm.ask("\nShow sample data?"):
-                if engine.scheme == 'mongodb':
-                    # MongoDB: pretty JSON
-                    collection = engine.client[db_name][coll_name]
-                    samples = list(collection.find().limit(3))
-                    for i, doc in enumerate(samples, 1):
-                        console.print(f"\n[yellow]Document {i}:[/yellow]")
-                        console.print(json.dumps(doc, indent=2, default=str))
-                else:
-                    # MySQL (and others): Rich Table
-                    columns, rows = engine.sample_rows(db_name, coll_name, limit=5)
-                    if columns:
-                        sample_table = Table(title=f"Sample from {coll_name}", box=box.ROUNDED)
-                        for col in columns:
-                            sample_table.add_column(col, style="cyan", overflow="fold")
-                        for row in rows:
-                            sample_table.add_row(*[cell[:80] for cell in row])
-                        console.print(sample_table)
-                    else:
-                        console.print("[yellow]No data found[/yellow]")
-
-            # Show indexes (MongoDB-specific)
-            if engine.scheme == 'mongodb' and Confirm.ask("\nShow indexes?"):
-                collection = engine.client[db_name][coll_name]
-                indexes = list(collection.list_indexes())
-                console.print("\n[cyan]Indexes:[/cyan]")
-                for idx in indexes:
-                    console.print(f"  - {idx['name']}: {idx['key']}")
-
-            if not Confirm.ask("\n[yellow]Browse another collection?[/yellow]"):
-                break
-
-        engine.close()
+        from .flows.browse_flow import BrowseWizardFlow
+        flow = BrowseWizardFlow(self)
+        flow.run()
 
     def run_saved_task(self, task_name: str = None):
-        """Run a saved task"""
+        """Run a saved task (interactive selector + confirmation, then delegates to task_runner)"""
+        from .task_runner import run_task, display_task_summary
+
         if not task_name:
             # Show task selector
             self.clear_screen()
             console.print(Panel("[bold cyan]⚙️  RUN SAVED TASK[/bold cyan]", style="cyan"))
 
-            saved_tasks_dict = self.settings_manager.list_tasks()  # Returns Dict[str, Dict]
-            saved_tasks_list = list(saved_tasks_dict.items())  # Convert to list of (name, config) tuples
+            saved_tasks_dict = self.settings_manager.list_tasks()
+            saved_tasks_list = list(saved_tasks_dict.items())
 
             if not saved_tasks_list:
                 console.print("[yellow]No saved tasks yet![/yellow]")
@@ -1179,23 +162,16 @@ class DbWizard:
                 return
 
             # Display tasks
+            from .utils import format_task_table_row
             table = Table(title="Saved Tasks", box=box.ROUNDED)
             table.add_column("#", style="cyan", width=4)
             table.add_column("Name", style="green")
             table.add_column("Source → Target", style="yellow")
             table.add_column("Collection", style="magenta")
 
-            # Import needed for formatting
-            from .utils import format_task_table_row
-
-            for i, (task_name, task_config) in enumerate(saved_tasks_list, 1):
-                _, source_target, coll_display = format_task_table_row(task_name, task_config)
-                table.add_row(
-                    str(i),
-                    task_name,
-                    source_target,
-                    coll_display
-                )
+            for i, (name, config) in enumerate(saved_tasks_list, 1):
+                _, source_target, coll_display = format_task_table_row(name, config)
+                table.add_row(str(i), name, source_target, coll_display)
 
             console.print(table)
 
@@ -1206,535 +182,50 @@ class DbWizard:
                 try:
                     choice = int(choice_str)
                     if 1 <= choice <= len(saved_tasks_list):
-                        task_name, task_config = saved_tasks_list[choice - 1]
-                        task = task_config
-                        task['name'] = task_name  # Add name for compatibility
+                        task_name = saved_tasks_list[choice - 1][0]
+                        task_config = saved_tasks_list[choice - 1][1]
                         break
                     console.print(f"[red]Please enter a number between 1 and {len(saved_tasks_list)}[/red]")
                 except ValueError:
                     console.print("[red]Please enter a valid number[/red]")
         else:
-            # Get task by name
-            task = self.settings_manager.get_task(task_name)
-            if not task:
+            task_config = self.settings_manager.get_task(task_name)
+            if not task_config:
                 console.print(f"[red]❌ Task '{task_name}' not found![/red]")
                 return
 
-        # Execute the task based on type
-        task_type = task.get('type', 'copy')  # Default to copy for backward compatibility
-        console.print(f"\n[cyan]🚀 Running {task_type} task: {task.get('name', 'unnamed')}[/cyan]")
+        # Show summary and confirm
+        console.print(f"\n[cyan]🚀 Task: {task_name}[/cyan]")
+        display_task_summary(task_config)
 
-        if task_type == 'backup':
-            # Handle backup task
-            summary = Table(box=box.SIMPLE)
-            summary.add_column("Property", style="cyan")
-            summary.add_column("Value", style="yellow")
+        if not Confirm.ask("\n[yellow]Execute this task?[/yellow]"):
+            return
 
-            summary.add_row("Type", "BACKUP")
-            summary.add_row("Source", task['mongo_uri'])
-            summary.add_row("Database", task['database'])
-            summary.add_row("Collections", str(task.get('collections', 'ALL')))
-            summary.add_row("Destination", task['storage_url'])
+        # Execute via centralized task runner
+        success = run_task(task_config)
 
-            console.print(summary)
+        if success:
+            console.print("[green]✅ Task completed![/green]")
 
-            if not Confirm.ask("\n[yellow]Execute this backup?[/yellow]"):
-                return
-
-            # Execute backup
-            backup_mgr = BackupManager(task['mongo_uri'], task['storage_url'])
-            result = backup_mgr.backup_database(
-                task['database'],
-                task.get('collections')
-            )
-
-            if result['success']:
-                console.print(f"[green]✅ Backup completed![/green]")
-                console.print(f"  Size: {result['size_human']}")
-                console.print(f"  Documents: {format_number(result['documents'])}")
-            else:
-                console.print(f"[red]❌ Backup failed: {result.get('error')}[/red]")
-
-            backup_mgr.close()
-
-        elif task_type == 'restore':
-            # Handle restore task
-            summary = Table(box=box.SIMPLE)
-            summary.add_column("Property", style="cyan")
-            summary.add_column("Value", style="yellow")
-
-            summary.add_row("Type", "RESTORE")
-            summary.add_row("Backup File", task['backup_file'])
-            summary.add_row("Target", task['mongo_uri'])
-            summary.add_row("Database", task.get('target_database', 'from backup'))
-            summary.add_row("Drop Target", "YES" if task.get('drop_target') else "NO")
-            summary.add_row("Storage", task['storage_url'])
-
-            console.print(summary)
-
-            if not Confirm.ask("\n[yellow]Execute this restore?[/yellow]"):
-                return
-
-            # Execute restore
-            backup_mgr = BackupManager(task['mongo_uri'], task['storage_url'])
-            result = backup_mgr.restore_database(
-                task['backup_file'],
-                task.get('target_database'),
-                task.get('drop_target', False)
-            )
-
-            if result['success']:
-                console.print(f"[green]✅ Restore completed![/green]")
-                console.print(f"  Database: {result['database']}")
-                console.print(f"  Documents: {format_number(result['documents'])}")
-            else:
-                console.print(f"[red]❌ Restore failed: {result.get('error')}[/red]")
-
-            backup_mgr.close()
-
-        else:
-            # Handle copy task (default/legacy)
-            summary = Table(box=box.SIMPLE)
-            summary.add_column("Property", style="cyan")
-            summary.add_column("Value", style="yellow")
-
-            summary.add_row("Type", "COPY")
-            summary.add_row("Source", task['source_uri'])
-            summary.add_row("Target", task['target_uri'])
-            summary.add_row("Database", f"{task['source_db']} → {task['target_db']}")
-            if task.get('source_collection'):
-                summary.add_row("Collection",
-                                f"{task['source_collection']} → {task.get('target_collection', task['source_collection'])}")
-            summary.add_row("Drop Target", "YES" if task.get('drop_target') else "NO")
-            summary.add_row("Copy Indexes", "YES" if task.get('copy_indexes', True) else "NO")
-
-            console.print(summary)
-
-            if not Confirm.ask("\n[yellow]Execute this task?[/yellow]"):
-                return
-
-            # Execute using engine interface
-            source_engine = EngineFactory.create(task['source_uri'])
-            target_engine = EngineFactory.create(task['target_uri'])
-            EngineFactory.check_same_engine(source_engine, target_engine)
-            source_engine.connect()
-            target_engine.connect()
-
-            try:
-                source_table = task.get('source_collection')
-                target_table = task.get('target_collection', source_table)
-
-                result = target_engine.copy(
-                    source_engine=source_engine,
-                    source_db=task['source_db'],
-                    source_table=source_table,
-                    target_db=task['target_db'],
-                    target_table=target_table,
-                    drop_target=task.get('drop_target', False)
-                )
-
-                if isinstance(result, dict) and all(isinstance(v, dict) for v in result.values()):
-                    total_docs = sum(r['documents_copied'] for r in result.values())
-                    console.print(f"[green]✅ Copied {len(result)} {target_engine.table_term_plural}, {format_number(total_docs)} rows[/green]")
-                else:
-                    console.print(f"[green]✅ Copied {format_number(result['documents_copied'])} rows[/green]")
-
-            except Exception as e:
-                console.print(f"[red]❌ Error: {e}[/red]")
-            finally:
-                source_engine.close()
-                target_engine.close()
-
-        console.print("[green]✅ Task completed![/green]")
         Prompt.ask("Press Enter to continue")
 
     def manage_tasks(self):
         """Manage saved tasks"""
-        while True:
-            self.clear_screen()
-            console.print(Panel("[bold cyan]⚙ MANAGE SAVED TASKS[/bold cyan]", style="cyan", expand=False))
-
-            saved_tasks_dict = self.settings_manager.list_tasks()  # Returns Dict[str, Dict]
-            saved_tasks_list = list(saved_tasks_dict.items())  # Convert to list of (name, config) tuples
-
-            if not saved_tasks_list:
-                console.print("[yellow]No saved tasks yet![/yellow]")
-            else:
-                # Import needed for formatting
-                from .utils import format_task_table_row
-
-                table = Table(title="Saved Tasks", box=box.ROUNDED)
-                table.add_column("#", style="cyan", width=4)
-                table.add_column("Name", style="green")
-                table.add_column("Source → Target", style="yellow")
-                table.add_column("Collection", style="magenta")
-
-                for i, (task_name, task_config) in enumerate(saved_tasks_list, 1):
-                    _, source_target, coll_display = format_task_table_row(task_name, task_config)
-                    table.add_row(
-                        str(i),
-                        task_name,
-                        source_target,
-                        coll_display
-                    )
-
-                console.print(table)
-
-            console.print("\n[bold]Options:[/bold]")
-            console.print("  [cyan]1.[/cyan] Run task")
-            console.print("  [cyan]2.[/cyan] Delete task")
-            console.print("  [cyan]3.[/cyan] Export tasks to file")
-            console.print("  [cyan]4.[/cyan] Back to main menu")
-
-            choice = Prompt.ask("Choose option", choices=["1", "2", "3", "4"])
-
-            if choice == "1" and saved_tasks_list:
-                self.run_saved_task()
-
-            elif choice == "2" and saved_tasks_list:
-                while True:
-                    try:
-                        idx = int(Prompt.ask("Select task to delete"))
-                        if 1 <= idx <= len(saved_tasks_list):
-                            break
-                        console.print(f"[red]Please enter a number between 1 and {len(saved_tasks_list)}[/red]")
-                    except ValueError:
-                        console.print("[red]Please enter a valid number[/red]")
-
-                task_name, _ = saved_tasks_list[idx - 1]
-                if Confirm.ask(f"Delete task '{task_name}'?"):
-                    if self.settings_manager.delete_task(task_name):
-                        console.print(f"[green]✓ Deleted '{task_name}'[/green]")
-                Prompt.ask("Press Enter to continue")
-
-            elif choice == "3" and saved_tasks_list:
-                filename = Prompt.ask("Export filename", default="mongo_tasks.json")
-                with open(filename, 'w') as f:
-                    json.dump(saved_tasks_dict, f, indent=2)
-                console.print(f"[green]✓ Exported {len(saved_tasks_list)} tasks to {filename}[/green]")
-                Prompt.ask("Press Enter to continue")
-
-            elif choice == "4":
-                break
+        from .flows.manage_tasks import ManageTasksFlow
+        flow = ManageTasksFlow(self)
+        flow.run()
 
     def backup_wizard(self):
         """Wizard for database backup"""
-        self.clear_screen()
-        console.print("\n[bold cyan]🗄️  DATABASE BACKUP WIZARD[/bold cyan]\n")
-
-        # 1. Select MongoDB source
-        source_uri = self.select_or_add_host("backup source")
-        if not source_uri:
-            return
-
-        # Connect
-        try:
-            engine = EngineFactory.create(source_uri)
-            engine.connect()
-        except Exception as e:
-            console.print(f"[red]❌ Connection failed: {e}[/red]")
-            Prompt.ask("Press Enter to continue")
-            return
-
-        # 2. Select database
-        database = self.select_database(engine, "backup")
-        if not database:
-            engine.close()
-            return
-
-        # 3. Select collections or all
-        console.print(f"\n[bold]Backup scope for {database}:[/bold]")
-        console.print("  [cyan]1.[/cyan] 📁 Entire database")
-        console.print("  [cyan]2.[/cyan] 📄 Specific collections")
-
-        scope_choice = Prompt.ask("Choose", choices=["1", "2"])
-
-        collections = None
-        if scope_choice == "2":
-            selected = self.select_collection(engine, database, "backup", allow_multiple=True)
-            if selected and selected != "ALL":
-                collections = selected if isinstance(selected, list) else [selected]
-
-        engine.close()
-
-        # 4. Select storage destination
-        self.clear_screen()
-        console.print("\n[bold cyan]📍 STORAGE DESTINATION[/bold cyan]\n")
-
-        # Show saved storage configs first
-        saved_storages = self.settings_manager.list_storages()
-        storage_list = list(saved_storages.items())
-
-        if storage_list:
-            console.print("[bold]Saved storage configs:[/bold]")
-            for i, (name, config) in enumerate(storage_list, 1):
-                storage_type = config.get('type', 'unknown')
-                if storage_type == 'ssh':
-                    details = f"{config.get('user')}@{config.get('host')}:{config.get('path', '/')}"
-                elif storage_type == 'ftp':
-                    details = f"{config.get('user')}@{config.get('host')}:{config.get('path', '/')}"
-                else:
-                    details = config.get('path', '/')
-                console.print(f"  [cyan]{i}.[/cyan] 📁 {name} ({storage_type.upper()}: {details})")
-
-            console.print(f"\n  [cyan]{len(storage_list) + 1}.[/cyan] ➕ Add new storage")
-
-            max_choice = str(len(storage_list) + 1)
-            choices = [str(i) for i in range(1, len(storage_list) + 2)]
-            choice = Prompt.ask("\nChoose storage", choices=choices)
-
-            if choice == max_choice:
-                # Add new storage
-                storage_config = self._prompt_new_storage()
-                storage_url = storage_config
-            else:
-                # Use saved storage
-                idx = int(choice) - 1
-                _, storage_config = storage_list[idx]
-                storage_url = storage_config
-        else:
-            # No saved configs, prompt for new one
-            console.print("[yellow]No saved storage configs. Let's create one:[/yellow]\n")
-            storage_config = self._prompt_new_storage()
-            storage_url = storage_config
-
-        # 5. Ask for backup name (optional - for overwriting same file)
-        console.print(f"\n[cyan]📝 BACKUP FILENAME[/cyan]\n")
-        console.print("[dim]By default, backups include a timestamp (e.g., 2025_09_30_16_45-mydb.tar.gz)[/dim]")
-        console.print("[dim]You can specify a custom name to always overwrite the same file[/dim]\n")
-
-        use_custom_name = Confirm.ask("Use custom filename (no timestamp)?", default=False)
-        custom_name = None
-        if use_custom_name:
-            custom_name = Prompt.ask("Enter filename", default=f"{database}.tar.gz")
-            if not custom_name.endswith('.tar.gz'):
-                custom_name += '.tar.gz'
-
-        # 6. Show configuration and confirm
-        console.print(f"\n[bold]Backup Configuration:[/bold]")
-        console.print(f"  Source: {_mask_password(source_uri)}")
-        console.print(f"  Database: {database}")
-        console.print(f"  Collections: {collections if collections else 'ALL'}")
-        if isinstance(storage_url, dict):
-            storage_desc = f"{storage_url['name']} ({storage_url['type']})"
-        else:
-            storage_desc = storage_url
-        console.print(f"  Destination: {storage_desc}")
-        if custom_name:
-            console.print(f"  Filename: {custom_name} [yellow](will overwrite existing)[/yellow]")
-        else:
-            console.print(f"  Filename: <timestamp>-{database}.tar.gz")
-
-        if not Prompt.ask("\n[bold yellow]Start backup?[/bold yellow]", choices=["y", "n"], default="y") == "y":
-            return
-
-        # Test storage connection first if remote
-        from .storage import StorageFactory
-        from urllib.parse import urlparse
-
-        # Determine if storage_url is a config dict or URL string
-        if isinstance(storage_url, dict):
-            # Using saved config
-            storage = StorageFactory.create(storage_url)
-            storage_type = storage_url.get('type', 'local')
-
-            if storage_type != 'local':
-                console.print("\n[dim]Testing storage connection and write permissions...[/dim]")
-                if hasattr(storage, 'test_connection'):
-                    test_path = storage_url.get('path', '/')
-                    success, error_msg = storage.test_connection(test_path)
-                    if not success:
-                        console.print(f"[red]❌ Storage connection failed: {error_msg}[/red]")
-                        Prompt.ask("Press Enter to continue")
-                        return
-                    console.print("[green]✓ Storage connection and permissions OK[/green]")
-        elif '://' in storage_url:
-            # Using URL string
-            storage = StorageFactory.create(storage_url)
-
-            console.print("\n[dim]Testing storage connection and write permissions...[/dim]")
-            if hasattr(storage, 'test_connection'):
-                parsed = urlparse(storage_url)
-                test_path = parsed.path or '/'
-                success, error_msg = storage.test_connection(test_path)
-                if not success:
-                    console.print(f"[red]❌ Storage connection failed: {error_msg}[/red]")
-                    Prompt.ask("Press Enter to continue")
-                    return
-                console.print("[green]✓ Storage connection OK[/green]")
-
-        # Pass storage config directly to BackupManager (it handles both dict and URL)
-        backup_mgr = BackupManager(source_uri, storage_url)
-
-        # Perform backup
-        result = backup_mgr.backup_database(database, collections, custom_name=custom_name)
-
-        if result['success']:
-            console.print(f"\n[green]✅ Backup completed successfully![/green]")
-            console.print(f"[bold]File:[/bold] {result['filename']}")
-            console.print(f"[bold]Size:[/bold] {result['size_human']}")
-            console.print(f"[bold]Documents:[/bold] {format_number(result['documents'])}")
-            console.print(f"[bold]Collections:[/bold] {result['collections']}")
-
-            # Ask to save as task
-            if Prompt.ask("\n[bold]Save as task?[/bold]", choices=["y", "n"], default="y") == "y":
-                task_name = Prompt.ask("Task name", default=f"backup_{database}")
-
-                task = BackupTask.create_backup_task(
-                    name=task_name,
-                    mongo_uri=source_uri,
-                    database=database,
-                    collections=collections,
-                    storage_url=storage_url,
-                    custom_name=custom_name
-                )
-
-                self.settings_manager.add_task(task_name, task)
-                console.print(f"[green]✓ Task '{task_name}' saved![/green]")
-                console.print(f"[dim]Run with: mw --task {task_name}[/dim]")
-        else:
-            console.print(f"[red]❌ Backup failed: {result.get('error')}[/red]")
-
-        backup_mgr.close()
-        Prompt.ask("\nPress Enter to continue")
+        from .flows.backup_flow import BackupWizardFlow
+        flow = BackupWizardFlow(self)
+        flow.run()
 
     def restore_wizard(self):
         """Wizard for database restore"""
-        self.clear_screen()
-        console.print("\n[bold cyan]📥 DATABASE RESTORE WIZARD[/bold cyan]\n")
-
-        # 1. Select storage source
-        console.print("[bold cyan]📍 STORAGE SOURCE[/bold cyan]\n")
-
-        # Check for saved storage configs
-        saved_storages = self.settings_manager.list_storages()
-        storage_list = list(saved_storages.items())
-        storage_url = None
-
-        if storage_list:
-            console.print("[bold]Available storage locations:[/bold]\n")
-
-            for i, (name, config) in enumerate(storage_list, 1):
-                storage_type = config.get('type', 'unknown')
-                storage_name = config.get('name', name)
-                console.print(f"  [cyan]{i}.[/cyan] {storage_name} ({storage_type})")
-
-            console.print(f"  [cyan]{len(storage_list) + 1}.[/cyan] ➕ Add new storage location")
-
-            choices = [str(i) for i in range(1, len(storage_list) + 2)]
-            choice = Prompt.ask("\nSelect storage", choices=choices, default="1")
-
-            if choice == str(len(storage_list) + 1):
-                # Add new storage
-                storage_config = self._prompt_new_storage()
-                storage_url = storage_config
-            else:
-                # Use saved storage
-                idx = int(choice) - 1
-                _, storage_config = storage_list[idx]
-                storage_url = storage_config
-        else:
-            # No saved configs, prompt for new one
-            console.print("[yellow]No saved storage configs. Let's create one:[/yellow]\n")
-            storage_config = self._prompt_new_storage()
-            storage_url = storage_config
-
-        # 2. List and select backup file
-        dummy_uri = "mongodb://localhost:27017"  # Need a URI for BackupManager init
-        backup_mgr = BackupManager(dummy_uri, storage_url)
-
-        console.print("\n[dim]Loading backups...[/dim]")
-        backups = backup_mgr.list_backups()
-
-        if not backups:
-            if isinstance(storage_url, dict):
-                location = f"{storage_url.get('name', 'storage')} ({storage_url.get('path', 'N/A')})"
-            else:
-                location = storage_url
-            console.print(f"[yellow]No backups found at: {location}[/yellow]")
-            Prompt.ask("Press Enter to continue")
-            return
-
-        # Display and select backup
-        backup_file = backup_mgr.display_backups(backups)
-        if not backup_file:
-            return
-
-        # 3. Select target MongoDB
-        self.clear_screen()
-        console.print("\n[bold cyan]SELECT RESTORE TARGET[/bold cyan]\n")
-        target_uri = self.select_or_add_host("restore target")
-        if not target_uri:
-            return
-
-        # Test connection
-        console.print("\n[dim]Testing connection...[/dim]")
-        is_connected, msg = _test_connection(target_uri)
-        if not is_connected:
-            console.print(f"[red]❌ Connection failed: {msg}[/red]")
-            Prompt.ask("Press Enter to continue")
-            return
-
-        # 4. Target database name
-        backup_filename = os.path.basename(backup_file)
-        # Extract database name from filename (format: YYYY_MM_DD_HH_MM-database.tar.gz)
-        if '-' in backup_filename and backup_filename.endswith('.tar.gz'):
-            default_db = backup_filename.split('-')[1].replace('.tar.gz', '')
-        else:
-            default_db = "restored_db"
-
-        target_database = Prompt.ask("Target database name", default=default_db)
-
-        # 5. Drop target option
-        drop_target = Prompt.ask(
-            "[bold yellow]⚠ Drop target database before restore?[/bold yellow]",
-            choices=["y", "n"],
-            default="n"
-        ) == "y"
-
-        # 6. Confirm and restore
-        console.print(f"\n[bold]Restore Configuration:[/bold]")
-        console.print(f"  Backup: {backup_filename}")
-        console.print(f"  Target: {_mask_password(target_uri)}")
-        console.print(f"  Database: {target_database}")
-        console.print(f"  Drop target: {'Yes' if drop_target else 'No'}")
-
-        if not Prompt.ask("\n[bold yellow]Start restore?[/bold yellow]", choices=["y", "n"], default="y") == "y":
-            return
-
-        # Update backup manager with correct target URI
-        backup_mgr = BackupManager(target_uri, storage_url)
-
-        # Perform restore
-        result = backup_mgr.restore_database(backup_file, target_database, drop_target)
-
-        if result['success']:
-            console.print(f"\n[green]✅ Restore completed successfully![/green]")
-            console.print(f"[bold]Database:[/bold] {result['database']}")
-            console.print(f"[bold]Documents:[/bold] {format_number(result['documents'])}")
-            console.print(f"[bold]Collections:[/bold] {result['collections']}")
-
-            # Ask to save as task
-            if Prompt.ask("\n[bold]Save as task?[/bold]", choices=["y", "n"], default="n") == "y":
-                task_name = Prompt.ask("Task name", default=f"restore_{target_database}")
-
-                task = BackupTask.create_restore_task(
-                    name=task_name,
-                    mongo_uri=target_uri,
-                    backup_file=backup_file,
-                    target_database=target_database,
-                    storage_url=storage_url,
-                    drop_target=drop_target
-                )
-
-                self.settings_manager.add_task(task_name, task)
-                console.print(f"[green]✓ Task '{task_name}' saved![/green]")
-                console.print(f"[dim]Run with: mw --task {task_name}[/dim]")
-        else:
-            console.print(f"[red]❌ Restore failed: {result.get('error')}[/red]")
-
-        backup_mgr.close()
-        Prompt.ask("\nPress Enter to continue")
+        from .flows.restore_flow import RestoreWizardFlow
+        flow = RestoreWizardFlow(self)
+        flow.run()
 
     def _prompt_new_storage(self):
         """Prompt for new storage configuration"""
@@ -1746,7 +237,7 @@ class DbWizard:
 
         if storage_choice == "1":
             # Local directory
-            default_dir = os.path.join(os.path.expanduser("~"), "mongo_backups")
+            default_dir = os.path.join(os.path.expanduser("~"), "db_backups")
             storage_path = Prompt.ask("Backup directory", default=default_dir)
             Path(storage_path).mkdir(parents=True, exist_ok=True)
 
@@ -1768,7 +259,7 @@ class DbWizard:
             host = Prompt.ask("SSH host")
             user = Prompt.ask("SSH user", default="root")
             port = IntPrompt.ask("SSH port", default=22)
-            path = Prompt.ask("Remote path", default="/backups/mongodb")
+            path = Prompt.ask("Remote path", default="/backups")
             key_path = Prompt.ask("SSH key path (optional, press Enter to skip)", default="")
 
             # Ask to save config

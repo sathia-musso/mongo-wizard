@@ -40,10 +40,9 @@ class TestBackupManager:
 
         assert result is False
 
-    @patch('tempfile.TemporaryDirectory')
     @patch('subprocess.run')
     @patch('db_wizard.backup.EngineFactory')
-    def test_backup_database(self, mock_factory, mock_run, mock_tempdir):
+    def test_backup_database(self, mock_factory, mock_run, tmp_path):
         """Test database backup process"""
         mock_engine = MagicMock()
         mock_engine.client = MagicMock()
@@ -58,7 +57,8 @@ class TestBackupManager:
 
         mock_run.return_value = MagicMock(returncode=0)
 
-        with tempfile.TemporaryDirectory() as real_tmpdir:
+        real_tmpdir = str(tmp_path)
+        with patch('tempfile.TemporaryDirectory') as mock_tempdir:
             mock_temp_context = MagicMock()
             mock_temp_context.__enter__ = MagicMock(return_value=real_tmpdir)
             mock_temp_context.__exit__ = MagicMock(return_value=None)
@@ -83,10 +83,9 @@ class TestBackupManager:
             assert 'filename' in result
             assert '.tar.gz' in result['filename']
 
-    @patch('tempfile.TemporaryDirectory')
     @patch('subprocess.run')
     @patch('db_wizard.backup.EngineFactory')
-    def test_backup_specific_collections(self, mock_factory, mock_run, mock_tempdir):
+    def test_backup_specific_collections(self, mock_factory, mock_run, tmp_path):
         """Test backing up specific collections"""
         mock_engine = MagicMock()
         mock_engine.client = MagicMock()
@@ -102,7 +101,8 @@ class TestBackupManager:
 
         mock_run.return_value = MagicMock(returncode=0)
 
-        with tempfile.TemporaryDirectory() as real_tmpdir:
+        real_tmpdir = str(tmp_path)
+        with patch('tempfile.TemporaryDirectory') as mock_tempdir:
             mock_temp_context = MagicMock()
             mock_temp_context.__enter__ = MagicMock(return_value=real_tmpdir)
             mock_temp_context.__exit__ = MagicMock(return_value=None)
@@ -232,7 +232,7 @@ class TestBackupTask:
         """Test creating backup task config"""
         task = BackupTask.create_backup_task(
             name="daily_backup",
-            mongo_uri="mongodb://localhost",
+            db_uri="mongodb://localhost",
             database="production",
             collections=['users', 'posts'],
             storage_url="ssh://backup@server:/backups"
@@ -248,7 +248,7 @@ class TestBackupTask:
         """Test creating restore task config"""
         task = BackupTask.create_restore_task(
             name="emergency_restore",
-            mongo_uri="mongodb://localhost",
+            db_uri="mongodb://localhost",
             backup_file="/backups/latest.tar.gz",
             target_database="restored_db",
             storage_url="/backups",

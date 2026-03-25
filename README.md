@@ -1,10 +1,10 @@
 # db-wizard
 
-Advanced database copy and migration tool with interactive wizard. Supports **MongoDB** and **MySQL**.
+Advanced database copy and migration tool with interactive wizard. Supports **MongoDB**, **MySQL**, **PostgreSQL**, and **Redis**.
 
 ## Why?
 
-- Copying databases between servers means remembering long `mongodump`/`mysqldump` commands with connection strings
+- Copying databases between servers means remembering long `mongodump`/`mysqldump`/`pg_dump` commands with connection strings
 - Shell aliases with plaintext passwords end up in bash history
 - No progress tracking, no error handling, no saved configurations
 - Repetitive tasks require typing the same commands every time
@@ -24,8 +24,8 @@ dbw
 
 ## Key Features
 
-- **Multi-database**: MongoDB and MySQL through a single interface
-- **Auto-detect engine**: URI scheme determines the engine (`mongodb://` or `mysql://`)
+- **Multi-database**: MongoDB, MySQL, PostgreSQL, and Redis through a single interface
+- **Auto-detect engine**: URI scheme determines the engine (`mongodb://`, `mysql://`, `postgres://`, `redis://`)
 - **Interactive wizard**: Guided menu for all operations
 - **SSH tunnels**: Built-in tunnel for hosts behind SSH (auto port-forward)
 - **Saved hosts**: Store connection configs with optional SSH tunnel
@@ -45,7 +45,7 @@ dbw
 ```
 
 The wizard guides you through:
-- Select/create saved hosts (MongoDB or MySQL, with optional SSH tunnel)
+- Select/create saved hosts (MongoDB, MySQL, PostgreSQL, or Redis, with optional SSH tunnel)
 - Choose database and tables/collections
 - Copy options (drop target, backup before drop, verify)
 - Save as reusable task
@@ -95,7 +95,6 @@ dbw --restore /backups/2025_01_15-production.tar.gz --restore-to mongodb://local
 |---------|-------|
 | `db-wizard` | Full name |
 | `dbw` | Primary short alias |
-| `mw` | Backward compat (from mongo-wizard) |
 
 ## Main Options
 
@@ -184,6 +183,8 @@ File permissions are set to 600 (owner-only) because it contains credentials.
 - Python 3.11+
 - For MongoDB: `mongodump`/`mongorestore` (install with `brew install mongodb-database-tools`)
 - For MySQL: `mysqldump`/`mysql` CLI tools (install with `brew install mysql-client`)
+- For PostgreSQL: `pg_dump`/`pg_restore`/`psql` CLI tools (install with `brew install postgresql`)
+- For Redis: `redis-cli` (install with `brew install redis`)
 
 The wizard checks requirements at startup and shows what's available.
 
@@ -209,9 +210,12 @@ db_wizard/
     engine.py           # DatabaseEngine ABC + EngineFactory
     engines/
         mongo.py        # MongoEngine (pymongo + mongodump/mongorestore)
-        mysql.py        # MySQLEngine (mysqldump/mysql CLI, zero Python deps)
+        mysql.py        # MySQLEngine (mysqldump/mysql CLI)
+        postgres.py     # PostgresEngine (pg_dump/psql CLI)
+        redis.py        # RedisEngine (redis-cli)
+    flows/              # Wizard interaction flows (copy, backup, etc.)
     tunnel.py           # SSH tunnel manager (auto port-forward)
-    wizard.py           # Interactive wizard (engine-agnostic)
+    wizard.py           # Interactive wizard entrypoint (engine-agnostic)
     cli.py              # Click CLI (auto-detects engine from URI)
     backup.py           # Backup/restore manager
     task_runner.py      # Saved task executor
