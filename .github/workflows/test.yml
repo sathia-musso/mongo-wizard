@@ -3,6 +3,7 @@ name: Test Suite
 on:
   push:
     branches: [ master, main, develop ]
+    tags: [ 'v*' ]
   pull_request:
     branches: [ master, main ]
   workflow_dispatch:  # Allow manual trigger
