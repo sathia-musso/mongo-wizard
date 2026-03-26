@@ -235,8 +235,8 @@ class CopyWizardFlow:
             task_name = Prompt.ask("Enter a name for this task")
 
             task_config = {
-                'source_uri': self.wizard.source_uri,
-                'target_uri': self.wizard.target_uri,
+                'source_uri': source_uri,
+                'target_uri': target_uri,
                 'source_db': source_db,
                 'target_db': target_db,
                 'source_collection': source_collection,

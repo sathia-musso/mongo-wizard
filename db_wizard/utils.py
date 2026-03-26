@@ -9,8 +9,10 @@ from rich.console import Console
 from rich.table import Table
 
 
-def mask_password(uri: str) -> str:
+def mask_password(uri: str | None) -> str:
     """Replace password in URI with ****. Works for both mongodb:// and mysql://."""
+    if not uri:
+        return "(not set)"
     if '@' not in uri:
         return uri
     before_at, after_at = uri.split('@', 1)
@@ -20,6 +22,87 @@ def mask_password(uri: str) -> str:
     return uri
 
 console = Console()
+
+
+# ============================================================================
+# Host Resolution
+# ============================================================================
+
+class HostInfo:
+    """Resolved info about a database host URI."""
+    def __init__(self, uri: str, name: str, has_tunnel: bool, tunnel_config: str | dict | None):
+        self.uri = uri
+        # Friendly display name (saved host name or hostname from URI)
+        self.name = name
+        # Whether this host requires an SSH tunnel
+        self.has_tunnel = has_tunnel
+        # SSH tunnel config (string hostname or dict with host/user/port/key_path)
+        self.tunnel_config = tunnel_config
+
+    @property
+    def tunnel_label(self) -> str:
+        """Human-readable tunnel target (e.g. 'scriba', 'claim')."""
+        if not self.tunnel_config:
+            return ""
+        if isinstance(self.tunnel_config, str):
+            return self.tunnel_config
+        return self.tunnel_config.get('host', '?')
+
+    def masked_uri(self) -> str:
+        return mask_password(self.uri)
+
+
+def resolve_host(uri: str | None, tunnel_override: str | dict | None = None) -> HostInfo:
+    """
+    Resolve a database URI against saved hosts.
+    Returns a HostInfo with the friendly name, tunnel detection, and tunnel config.
+
+    Args:
+        uri: Database URI to resolve
+        tunnel_override: Explicit tunnel config from task (takes precedence)
+    """
+    from urllib.parse import urlparse
+
+    if not uri:
+        return HostInfo(uri='', name='(not set)', has_tunnel=False, tunnel_config=None)
+
+    # Start with what we can extract from the URI itself
+    try:
+        parsed = urlparse(uri)
+        fallback_name = parsed.hostname or 'localhost'
+    except Exception:
+        fallback_name = 'unknown'
+
+    resolved_name = None
+    tunnel_config = tunnel_override
+    has_tunnel = bool(tunnel_override)
+
+    # Look up in saved hosts for a friendly name and tunnel config
+    try:
+        from .settings import SettingsManager
+        for host_name, host_val in SettingsManager().list_hosts().items():
+            if isinstance(host_val, dict):
+                host_uri = host_val.get('uri', '')
+                host_tunnel = host_val.get('ssh_tunnel')
+            else:
+                host_uri = host_val
+                host_tunnel = None
+
+            if host_uri == uri:
+                resolved_name = host_name
+                if host_tunnel and not tunnel_config:
+                    tunnel_config = host_tunnel
+                    has_tunnel = True
+                break
+    except Exception:
+        pass
+
+    return HostInfo(
+        uri=uri,
+        name=resolved_name or fallback_name,
+        has_tunnel=has_tunnel,
+        tunnel_config=tunnel_config,
+    )
 
 
 # ============================================================================
@@ -162,15 +245,11 @@ def format_task_table_row(
     if not all([source_uri, target_uri, source_db, target_db]):
         return task_name, "[red]Invalid task config[/red]", "N/A"
 
-    # Extract hostnames
-    try:
-        source_parsed = urlparse(source_uri)
-        target_parsed = urlparse(target_uri)
-        source_host = source_parsed.hostname or 'localhost'
-        target_host = target_parsed.hostname or 'localhost'
-    except Exception:
-        source_host = 'unknown'
-        target_host = 'unknown'
+    # Resolve host names and SSH tunnel info
+    source_info = resolve_host(source_uri, task_config.get('source_ssh_tunnel'))
+    target_info = resolve_host(target_uri, task_config.get('target_ssh_tunnel'))
+    source_host = source_info.name
+    target_host = target_info.name
 
     # Handle collection/table display
     coll = task_config.get('source_collection', 'ALL')
@@ -251,8 +330,15 @@ def format_task_table_row(
             target_count = ""
 
     # Build display string
-    source_part = f"[{source_host_color}]{source_host}[/{source_host_color}]:[blue]{source_db}[/blue] {source_count}".strip()
-    target_part = f"[{target_host_color}]{target_host}[/{target_host_color}]:[blue]{target_db}[/blue] {target_count}".strip()
+    def _format_host_part(info, db, color, count_str):
+        host_db = f"[{color}]{info.name}[/{color}]:[blue]{db}[/blue]"
+        if info.has_tunnel:
+            return f"[red][[/red][red]SSH TUNNEL[/red] {host_db}[red]][/red] {count_str}".strip()
+        return f"{host_db} {count_str}".strip()
+
+    source_part = _format_host_part(source_info, source_db, source_host_color, source_count)
+    target_part = _format_host_part(target_info, target_db, target_host_color, target_count)
+
     source_target = f"{source_part} → {target_part}"
 
     return task_name, source_target, coll_display

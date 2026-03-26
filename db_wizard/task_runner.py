@@ -33,8 +33,20 @@ def run_task(task_config: dict[str, Any], assume_yes: bool = False, force_python
 
 def run_copy_task(task_config: dict[str, Any], assume_yes: bool = False, force_python: bool = False) -> bool:
     """Execute a copy task using the appropriate engine."""
-    source_uri = task_config['source_uri']
-    target_uri = task_config['target_uri']
+    from .utils import resolve_host
+
+    source_info = resolve_host(task_config['source_uri'], task_config.get('source_ssh_tunnel'))
+    target_info = resolve_host(task_config['target_uri'], task_config.get('target_ssh_tunnel'))
+
+    # Open SSH tunnels if needed (rewrites URI to localhost:free_port)
+    source_uri = source_info.uri
+    target_uri = target_info.uri
+    if source_info.has_tunnel:
+        from .tunnel import open_tunnel
+        source_uri = open_tunnel(source_uri, source_info.tunnel_config)
+    if target_info.has_tunnel:
+        from .tunnel import open_tunnel
+        target_uri = open_tunnel(target_uri, target_info.tunnel_config)
 
     # Create engines from URIs (auto-detects MongoDB vs MySQL)
     source_engine = EngineFactory.create(source_uri)
@@ -50,7 +62,26 @@ def run_copy_task(task_config: dict[str, Any], assume_yes: bool = False, force_p
         source_table = task_config.get('source_collection')
         target_table = task_config.get('target_collection', source_table)
 
-        if source_table:
+        if isinstance(source_table, list):
+            # Multiple tables -- iterate one by one
+            target_tables = target_table if isinstance(target_table, list) else source_table
+            total_docs = 0
+            for src_t, tgt_t in zip(source_table, target_tables):
+                console.print(f"\n[bold]📁 Copying: {src_t}[/bold]")
+                result = target_engine.copy(
+                    source_engine=source_engine,
+                    source_db=task_config['source_db'],
+                    source_table=src_t,
+                    target_db=task_config['target_db'],
+                    target_table=tgt_t,
+                    drop_target=task_config.get('drop_target', False),
+                    force=assume_yes,
+                    force_python=task_config.get('force_python', force_python),
+                )
+                total_docs += result.get('documents_copied', 0)
+            console.print(f"[green]✅ Copied {len(source_table)} {target_engine.table_term_plural}, {format_number(total_docs)} rows[/green]")
+        elif source_table:
+            # Single table
             result = target_engine.copy(
                 source_engine=source_engine,
                 source_db=task_config['source_db'],
@@ -93,8 +124,8 @@ def run_copy_task(task_config: dict[str, Any], assume_yes: bool = False, force_p
 
 
 def _get_uri(task_config: dict[str, Any]) -> str:
-    """Get database URI from task config, supporting both old and new key names."""
-    return task_config.get('db_uri') or task_config.get('mongo_uri') or task_config['source_uri']
+    """Get database URI from task config."""
+    return task_config['db_uri']
 
 
 def run_backup_task(task_config: dict[str, Any]) -> bool:
@@ -174,10 +205,22 @@ def display_task_summary(task_config: dict[str, Any]) -> None:
         console.print(f"[bold]Storage:[/bold] {task_config['storage_url']}")
 
     else:
+        from .utils import resolve_host
+
         console.print(f"[bold]Type:[/bold] COPY")
-        console.print(f"[bold]Source:[/bold] {mask_password(task_config['source_uri'])}")
-        console.print(f"[bold]Target:[/bold] {mask_password(task_config['target_uri'])}")
-        console.print(f"[bold]Database:[/bold] {task_config['source_db']} → {task_config['target_db']}")
+        source_info = resolve_host(task_config.get('source_uri'), task_config.get('source_ssh_tunnel'))
+        target_info = resolve_host(task_config.get('target_uri'), task_config.get('target_ssh_tunnel'))
+
+        src_label = source_info.masked_uri()
+        tgt_label = target_info.masked_uri()
+        if source_info.has_tunnel:
+            src_label += f" (via [red]SSH TUNNEL[/red]: {source_info.tunnel_label})"
+        if target_info.has_tunnel:
+            tgt_label += f" (via [red]SSH TUNNEL[/red]: {target_info.tunnel_label})"
+
+        console.print(f"[bold]Source:[/bold] {src_label}")
+        console.print(f"[bold]Target:[/bold] {tgt_label}")
+        console.print(f"[bold]Database:[/bold] {task_config.get('source_db', '?')} → {task_config.get('target_db', '?')}")
         if task_config.get('source_collection'):
             console.print(
                 f"[bold]Collection:[/bold] {task_config['source_collection']} → "
