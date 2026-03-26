@@ -4,6 +4,7 @@ Redis engine implementation.
 Uses redis-cli exclusively.
 """
 
+import os
 import shutil
 import subprocess
 from typing import Any, Self
@@ -123,8 +124,49 @@ class RedisEngine(DatabaseEngine):
                 return 0
         return 0
 
+    def _redis_run(self, base_args: list[str], *redis_cmd: str) -> str:
+        """Run a redis-cli command and return output, handling binary data safely."""
+        cmd = ['redis-cli'] + base_args + list(redis_cmd)
+        # Use bytes mode to handle binary values stored in Redis
+        result = subprocess.run(cmd, capture_output=True)
+        if result.returncode != 0:
+            return ""
+        return result.stdout.decode('utf-8', errors='replace').strip()
+
     def sample_rows(self, database: str, table: str, limit: int = 5) -> tuple[list[str], list[list[str]]]:
-        return ["Key", "Type"], [["(Redis sampling not fully implemented via CLI)", ""]]
+        """Sample random keys from Redis with their type and value preview."""
+        params = self.params.copy()
+        params['database'] = database
+        base_args = _build_redis_args(params)
+
+        # Commands to preview each Redis data type
+        preview_cmds = {
+            'string': lambda k: self._redis_run(base_args, 'GET', k),
+            'list':   lambda k: self._redis_run(base_args, 'LRANGE', k, '0', '4'),
+            'set':    lambda k: self._redis_run(base_args, 'SRANDMEMBER', k, '5'),
+            'hash':   lambda k: self._redis_run(base_args, 'HGETALL', k),
+            'zset':   lambda k: self._redis_run(base_args, 'ZRANGE', k, '0', '4', 'WITHSCORES'),
+        }
+
+        rows = []
+        for _ in range(limit):
+            key = self._redis_run(base_args, 'RANDOMKEY')
+            if not key or key == '(nil)':
+                break
+
+            key_type = self._redis_run(base_args, 'TYPE', key) or "?"
+
+            # Get value preview, truncate to 100 chars
+            value = preview_cmds.get(key_type, lambda k: "")(key)
+            if len(value) > 100:
+                value = value[:97] + "..."
+
+            rows.append([key, key_type, value])
+
+        if not rows:
+            rows = [["(empty database)", "", ""]]
+
+        return ["Key", "Type", "Value"], rows
 
     def check_tools(self) -> dict[str, bool]:
         return {
@@ -132,11 +174,41 @@ class RedisEngine(DatabaseEngine):
         }
 
     def dump(self, database: str, tables: list[str] | None, output_path: str) -> bool:
-        console.print("[yellow]Redis dump via wizard currently not supported via CLI[/yellow]")
-        return False
+        """Dump Redis database using redis-cli --rdb.
+        Downloads the RDB snapshot from the server to output_path/dump.rdb."""
+        os.makedirs(output_path, exist_ok=True)
+        rdb_path = os.path.join(output_path, 'dump.rdb')
+
+        base_args = _build_redis_args(self.params, include_db=False)
+        cmd = ['redis-cli'] + base_args + ['--rdb', rdb_path]
+
+        console.print(f"[dim]Downloading RDB snapshot...[/dim]")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+        if result.returncode != 0:
+            error = result.stderr.strip() or result.stdout.strip()
+            console.print(f"[red]redis-cli --rdb failed: {error}[/red]")
+            return False
+
+        if not os.path.exists(rdb_path) or os.path.getsize(rdb_path) == 0:
+            console.print("[red]RDB file is empty or missing[/red]")
+            return False
+
+        console.print(f"[green]✓ RDB snapshot saved ({os.path.getsize(rdb_path)} bytes)[/green]")
+        return True
 
     def restore(self, input_path: str, target_database: str, drop_target: bool = False) -> bool:
-        console.print("[yellow]Redis restore via wizard currently not supported via CLI[/yellow]")
+        """Restore Redis from RDB file.
+        Note: RDB restore requires stopping the Redis server and replacing its dump.rdb,
+        which can't be done safely via CLI alone. We use the RESTORE command for individual
+        keys instead, but that requires a different approach.
+        For now, we guide the user on manual restore."""
+        console.print("[yellow]Redis RDB restore requires server-side access.[/yellow]")
+        console.print("[dim]To restore manually:[/dim]")
+        console.print(f"[dim]  1. Stop Redis server[/dim]")
+        console.print(f"[dim]  2. Copy {input_path}/dump.rdb to your Redis data directory[/dim]")
+        console.print(f"[dim]  3. Restart Redis server[/dim]")
+        console.print("[dim]The RDB file contains all databases, not just the selected one.[/dim]")
         return False
 
     def copy(self, source_engine: 'DatabaseEngine', source_db: str, source_table: str | None, target_db: str, target_table: str | None, drop_target: bool = False, force: bool = False, **kwargs) -> dict[str, Any]:

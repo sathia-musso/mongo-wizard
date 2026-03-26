@@ -92,12 +92,17 @@ def run_copy_task(task_config: dict[str, Any], assume_yes: bool = False, force_p
         target_engine.close()
 
 
+def _get_uri(task_config: dict[str, Any]) -> str:
+    """Get database URI from task config, supporting both old and new key names."""
+    return task_config.get('db_uri') or task_config.get('mongo_uri') or task_config['source_uri']
+
+
 def run_backup_task(task_config: dict[str, Any]) -> bool:
     """Execute a backup task."""
     from .backup import BackupManager
 
     backup_mgr = BackupManager(
-        task_config['db_uri'],
+        _get_uri(task_config),
         task_config['storage_url']
     )
 
@@ -126,7 +131,7 @@ def run_restore_task(task_config: dict[str, Any]) -> bool:
     from .backup import BackupManager
 
     backup_mgr = BackupManager(
-        task_config['db_uri'],
+        _get_uri(task_config),
         task_config['storage_url']
     )
 
@@ -155,7 +160,7 @@ def display_task_summary(task_config: dict[str, Any]) -> None:
 
     if task_type == 'backup':
         console.print(f"[bold]Type:[/bold] BACKUP")
-        console.print(f"[bold]Source:[/bold] {mask_password(task_config['db_uri'])}")
+        console.print(f"[bold]Source:[/bold] {mask_password(_get_uri(task_config))}")
         console.print(f"[bold]Database:[/bold] {task_config['database']}")
         console.print(f"[bold]Collections:[/bold] {task_config.get('collections', 'ALL')}")
         console.print(f"[bold]Destination:[/bold] {task_config['storage_url']}")
@@ -163,7 +168,7 @@ def display_task_summary(task_config: dict[str, Any]) -> None:
     elif task_type == 'restore':
         console.print(f"[bold]Type:[/bold] RESTORE")
         console.print(f"[bold]Backup:[/bold] {task_config['backup_file']}")
-        console.print(f"[bold]Target:[/bold] {mask_password(task_config['db_uri'])}")
+        console.print(f"[bold]Target:[/bold] {mask_password(_get_uri(task_config))}")
         console.print(f"[bold]Database:[/bold] {task_config.get('target_database', 'from backup')}")
         console.print(f"[bold]Drop Target:[/bold] {'Yes' if task_config.get('drop_target') else 'No'}")
         console.print(f"[bold]Storage:[/bold] {task_config['storage_url']}")

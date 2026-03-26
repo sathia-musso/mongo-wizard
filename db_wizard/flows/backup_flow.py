@@ -129,7 +129,7 @@ class BackupWizardFlow:
             return
 
         # Test storage connection first if remote
-        from .storage import StorageFactory
+        from ..storage import StorageFactory
 
         # Determine if storage_url is a config dict or URL string
         if isinstance(storage_url, dict):

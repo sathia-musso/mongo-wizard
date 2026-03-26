@@ -105,11 +105,12 @@ class BackupManager:
 
             console.print(f"\n[bold]Total:[/bold] {total_collections} collections, {format_docs(total_docs)} documents\n")
 
-            # Check for dump tool
+            # Check that at least one required tool is available
             tools = self.engine.check_tools()
-            if not tools.get('mongodump', False) and not tools.get('mysqldump', False):
-                console.print("[red]Dump tool not found! Install database tools (mongodump or mysqldump).[/red]")
-                return {'success': False, 'error': 'dump tool not found'}
+            if not any(tools.values()):
+                missing = ', '.join(tools.keys())
+                console.print(f"[red]Required tools not found: {missing}[/red]")
+                return {'success': False, 'error': f'required tools not found: {missing}'}
 
             # Run dump via engine
             with console.status(f"[cyan]Dumping {database}...[/cyan]"):
@@ -196,11 +197,24 @@ class BackupManager:
         if not self.connect():
             return {'success': False, 'error': 'Connection failed'}
 
-        # Check for mongorestore
+        # Redis RDB restore can't be done via CLI -- guide the user
+        if self.engine.scheme == 'redis':
+            console.print("\n[yellow]Redis restore requires server-side access.[/yellow]")
+            console.print("[bold]To restore the RDB backup manually:[/bold]")
+            console.print(f"  1. Download the backup: {backup_file}")
+            console.print(f"  2. Extract the tar.gz to get dump.rdb")
+            console.print(f"  3. Stop the Redis server")
+            console.print(f"  4. Replace the server's dump.rdb with the extracted one")
+            console.print(f"  5. Restart the Redis server")
+            console.print("\n[dim]The RDB snapshot contains all databases, not just the selected one.[/dim]")
+            return {'success': False, 'error': 'Redis restore requires manual server-side steps (see instructions above)'}
+
+        # Check that at least one required tool is available
         tools = self.engine.check_tools()
-        if not tools.get('mongorestore', False) and not tools.get('mysql', False):
-            console.print("[red]Restore tool not found! Install database tools (mongorestore or mysql).[/red]")
-            return {'success': False, 'error': 'restore tool not found'}
+        if not any(tools.values()):
+            missing = ', '.join(tools.keys())
+            console.print(f"[red]Required tools not found: {missing}[/red]")
+            return {'success': False, 'error': f'required tools not found: {missing}'}
 
         with tempfile.TemporaryDirectory() as temp_dir:
             # Download backup if remote
