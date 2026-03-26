@@ -264,6 +264,7 @@ jobs:
     needs: [unit-tests, cli-tests, publish-test]
     # Only publish when a version tag is pushed
     if: startsWith(github.ref, 'refs/tags/v')
+    environment: pypi
     permissions:
       id-token: write  # Required for trusted publishing
 

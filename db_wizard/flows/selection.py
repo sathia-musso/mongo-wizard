@@ -233,72 +233,93 @@ class SelectionFlow:
                 })
             progress.remove_task(task)
 
-        collections.sort(key=lambda x: x['documents'], reverse=True)
+        # Sort toggle: alphabetical (default) or by row count
+        sort_by_name = True
 
-        table = Table(title=f"📁 {term_plural.capitalize()} in {database}", box=box.ROUNDED)
-        table.add_column("#", style="cyan", width=4)
-        table.add_column(term.capitalize(), style="green")
-        table.add_column("Rows", style="yellow", justify="right")
-        table.add_column("Indexes", style="magenta", justify="right")
+        while True:
+            if sort_by_name:
+                collections.sort(key=lambda x: x['name'])
+                sort_label = "alphabetical"
+            else:
+                collections.sort(key=lambda x: x['documents'], reverse=True)
+                sort_label = "by rows"
 
-        if allow_all:
-            table.add_row("0", "[bold]ALL COLLECTIONS[/bold]", format_number(sum(c['documents'] for c in collections)), "-")
+            self.wizard.clear_screen()
+            console.print(f"\n[bold cyan]Select {purpose.upper()} {term} from {database}:[/bold cyan]\n")
 
-        for i, coll in enumerate(collections, 1):
-            table.add_row(
-                str(i),
-                coll['name'],
-                f"{format_number(coll['documents'])}",
-                str(coll['indexes'])
-            )
+            table = Table(title=f"📁 {term_plural.capitalize()} in {database} ({sort_label})", box=box.ROUNDED)
+            table.add_column("#", style="cyan", width=4)
+            table.add_column(term.capitalize(), style="green")
+            table.add_column("Rows", style="yellow", justify="right")
+            table.add_column("Indexes", style="magenta", justify="right")
 
-        console.print(table)
+            if allow_all:
+                table.add_row("0", "[bold]ALL COLLECTIONS[/bold]", format_number(sum(c['documents'] for c in collections)), "-")
 
-        if allow_multiple:
-            console.print("\n[yellow]💡 Multiple selection mode:[/yellow]")
-            console.print("[dim]Enter numbers separated by commas (e.g., 1,3,5) or ranges (e.g., 1-5)[/dim]")
-            console.print("[dim]Enter 0 for ALL collections, or leave empty to cancel[/dim]")
+            for i, coll in enumerate(collections, 1):
+                table.add_row(
+                    str(i),
+                    coll['name'],
+                    f"{format_number(coll['documents'])}",
+                    str(coll['indexes'])
+                )
 
-            selection = Prompt.ask("\nSelect collections")
+            console.print(table)
+            console.print("[dim]Type 's' to toggle sort (alphabetical/by rows)[/dim]")
 
-            if not selection:
-                return []
+            if allow_multiple:
+                console.print("\n[yellow]💡 Multiple selection mode:[/yellow]")
+                console.print("[dim]Enter numbers separated by commas (e.g., 1,3,5) or ranges (e.g., 1-5)[/dim]")
+                console.print("[dim]Enter 0 for ALL collections, or leave empty to cancel[/dim]")
 
-            if selection == "0":
-                return None  # All collections
+                selection = Prompt.ask("\nSelect collections")
 
-            selected = []
-            try:
-                parts = selection.split(',')
-                for part in parts:
-                    part = part.strip()
-                    if '-' in part:
-                        start, end = part.split('-')
-                        start, end = int(start.strip()), int(end.strip())
-                        for i in range(start, end + 1):
-                            if 1 <= i <= len(collections):
-                                selected.append(collections[i - 1]['name'])
-                    else:
-                        idx = int(part)
-                        if 1 <= idx <= len(collections):
-                            selected.append(collections[idx - 1]['name'])
+                if selection.lower() == 's':
+                    sort_by_name = not sort_by_name
+                    continue
 
-                seen = set()
-                selected = [x for x in selected if not (x in seen or seen.add(x))]
-
-                if selected:
-                    console.print(f"[green]✅ Selected {len(selected)} collections: {', '.join(selected[:3])}{'...' if len(selected) > 3 else ''}[/green]")
-                    return selected
-                else:
-                    console.print("[red]No valid collections selected[/red]")
+                if not selection:
                     return []
-            except Exception as e:
-                console.print(f"[red]Invalid selection: {e}[/red]")
-                return []
 
-        else:
-            while True:
+                if selection == "0":
+                    return None  # All collections
+
+                selected = []
+                try:
+                    parts = selection.split(',')
+                    for part in parts:
+                        part = part.strip()
+                        if '-' in part:
+                            start, end = part.split('-')
+                            start, end = int(start.strip()), int(end.strip())
+                            for i in range(start, end + 1):
+                                if 1 <= i <= len(collections):
+                                    selected.append(collections[i - 1]['name'])
+                        else:
+                            idx = int(part)
+                            if 1 <= idx <= len(collections):
+                                selected.append(collections[idx - 1]['name'])
+
+                    seen = set()
+                    selected = [x for x in selected if not (x in seen or seen.add(x))]
+
+                    if selected:
+                        console.print(f"[green]✅ Selected {len(selected)} collections: {', '.join(selected[:3])}{'...' if len(selected) > 3 else ''}[/green]")
+                        return selected
+                    else:
+                        console.print("[red]No valid collections selected[/red]")
+                        return []
+                except Exception as e:
+                    console.print(f"[red]Invalid selection: {e}[/red]")
+                    return []
+
+            else:
                 choice_str = _ask(f"\nSelect {term} (0 for ALL)" if allow_all else f"\nSelect {term}")
+
+                if choice_str.lower() == 's':
+                    sort_by_name = not sort_by_name
+                    continue
+
                 try:
                     choice = int(choice_str)
                     if choice == 0 and allow_all:

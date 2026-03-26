@@ -198,13 +198,13 @@ class TestSelectionFlow:
             {'name': 'logs', 'rows': 100, 'indexes': 1},
         ])
 
-        # User picks option 1 -> orders (sorted by row count: orders, users, logs)
+        # User picks option 1 -> logs (sorted alphabetically: logs, orders, users)
         with patch("db_wizard.flows.selection._ask", return_value="1"):
             result = SelectionFlow(wizard).select_collection(
                 engine, "mydb", "source", allow_all=True, allow_multiple=False
             )
 
-        assert result == "orders"  # Highest row count
+        assert result == "logs"  # First alphabetically
 
     def test_select_collection_all_returns_none(self):
         from db_wizard.flows.selection import SelectionFlow
@@ -232,7 +232,7 @@ class TestSelectionFlow:
             {'name': 'logs', 'rows': 100, 'indexes': 1},
         ])
 
-        # User picks "1,3" -> orders and logs (sorted: orders=1, users=2, logs=3)
+        # User picks "1,3" -> logs and users (sorted alphabetically: logs=1, orders=2, users=3)
         with patch("db_wizard.flows.selection.Prompt.ask", return_value="1,3"):
             result = SelectionFlow(wizard).select_collection(
                 engine, "mydb", "source", allow_all=True, allow_multiple=True
@@ -240,8 +240,8 @@ class TestSelectionFlow:
 
         assert isinstance(result, list)
         assert len(result) == 2
-        assert "orders" in result
         assert "logs" in result
+        assert "users" in result
 
     def test_select_collection_range(self):
         from db_wizard.flows.selection import SelectionFlow
