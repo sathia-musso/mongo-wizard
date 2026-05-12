@@ -13,11 +13,21 @@ db-wizard fixes all of this with saved hosts, saved tasks, SSH tunnels, interact
 
 ## Quick Start
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
+### Installation
 
+You can install `db-wizard` globally using `pipx` (recommended) or `pip`:
+
+```bash
+# Recommended: Install globally in an isolated environment
+pipx install db-wizard
+
+# Alternative: Install via pip
+pip install db-wizard
+```
+
+### Usage
+
+```bash
 # Launch interactive wizard
 dbw
 ```
