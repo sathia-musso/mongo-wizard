@@ -131,9 +131,16 @@ def _get_uri(task_config: dict[str, Any]) -> str:
 def run_backup_task(task_config: dict[str, Any]) -> bool:
     """Execute a backup task."""
     from .backup import BackupManager
+    from .utils import resolve_host
+
+    host_info = resolve_host(task_config['db_uri'], task_config.get('ssh_tunnel'))
+    db_uri = host_info.uri
+    if host_info.has_tunnel:
+        from .tunnel import open_tunnel
+        db_uri = open_tunnel(db_uri, host_info.tunnel_config)
 
     backup_mgr = BackupManager(
-        _get_uri(task_config),
+        db_uri,
         task_config['storage_url']
     )
 
@@ -160,9 +167,16 @@ def run_backup_task(task_config: dict[str, Any]) -> bool:
 def run_restore_task(task_config: dict[str, Any]) -> bool:
     """Execute a restore task."""
     from .backup import BackupManager
+    from .utils import resolve_host
+
+    host_info = resolve_host(task_config['db_uri'], task_config.get('ssh_tunnel'))
+    db_uri = host_info.uri
+    if host_info.has_tunnel:
+        from .tunnel import open_tunnel
+        db_uri = open_tunnel(db_uri, host_info.tunnel_config)
 
     backup_mgr = BackupManager(
-        _get_uri(task_config),
+        db_uri,
         task_config['storage_url']
     )
 

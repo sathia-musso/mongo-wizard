@@ -21,9 +21,11 @@ class BackupWizardFlow:
         console.print("\n[bold cyan]🗄️  DATABASE BACKUP WIZARD[/bold cyan]\n")
 
         # 1. Select source
-        source_uri = self.wizard.select_or_add_host("backup source")
-        if not source_uri:
+        source_host = self.wizard.select_or_add_host("backup source")
+        if not source_host:
             return
+
+        source_uri = source_host['resolved_uri']
 
         # Connect
         try:
@@ -181,12 +183,13 @@ class BackupWizardFlow:
 
                 task = BackupTask.create_backup_task(
                     name=task_name,
-                    db_uri=source_uri,
+                    db_uri=source_host['raw_uri'],
                     database=database,
                     collections=collections,
                     storage_url=storage_url,
                     custom_name=custom_name
                 )
+                task['ssh_tunnel'] = source_host['ssh_tunnel']
 
                 self.wizard.settings_manager.add_task(task_name, task)
                 console.print(f"[green]✓ Task '{task_name}' saved![/green]")

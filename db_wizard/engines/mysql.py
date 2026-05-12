@@ -47,19 +47,23 @@ def parse_mysql_uri(uri: str) -> dict[str, Any]:
 def _build_mysql_args(params: dict[str, Any]) -> list[str]:
     """
     Build common mysql/mysqldump CLI arguments from parsed URI params.
-    Returns list of args like ['-h', 'host', '-P', '3306', '-u', 'user', '-pPASS']
+    Returns list of args like ['-h', 'host', '-P', '3306', '-u', 'user']
     """
     args = [
         '-h', params['host'],
         '-P', str(params['port']),
         '-u', params['user'],
     ]
-    if params['password']:
-        # -p with no space before password is the MySQL convention
-        args.append(f"-p{params['password']}")
     # Skip SSL by default - most internal/tunneled servers don't support it
     args.append('--skip-ssl')
     return args
+
+def _get_mysql_env(params: dict[str, Any]) -> dict[str, str]:
+    """Return environment dict with MYSQL_PWD set if password exists."""
+    env = os.environ.copy()
+    if params.get('password'):
+        env['MYSQL_PWD'] = params['password']
+    return env
 
 
 class MySQLEngine(DatabaseEngine):
@@ -81,7 +85,7 @@ class MySQLEngine(DatabaseEngine):
             '--connect-timeout', str(max(1, timeout // 1000)),
             '-e', 'SELECT 1',
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout // 1000 + 5)
+        result = subprocess.run(cmd, env=_get_mysql_env(self.params), capture_output=True, text=True, timeout=timeout // 1000 + 5)
         if result.returncode != 0:
             error = result.stderr.strip()
             raise ConnectionError(f"MySQL connection failed: {error}")
@@ -100,7 +104,7 @@ class MySQLEngine(DatabaseEngine):
                 '--connect-timeout', str(max(1, timeout // 1000)),
                 '-N', '-e', 'SELECT COUNT(*) FROM information_schema.SCHEMATA',
             ]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout // 1000 + 5)
+            result = subprocess.run(cmd, env=_get_mysql_env(self.params), capture_output=True, text=True, timeout=timeout // 1000 + 5)
             if result.returncode == 0:
                 db_count = result.stdout.strip()
                 return True, f"OK ({db_count} databases)"
@@ -120,7 +124,7 @@ class MySQLEngine(DatabaseEngine):
             "LEFT JOIN information_schema.TABLES t ON s.SCHEMA_NAME = t.TABLE_SCHEMA "
             "GROUP BY s.SCHEMA_NAME ORDER BY s.SCHEMA_NAME"
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, env=_get_mysql_env(self.params), capture_output=True, text=True)
         if result.returncode != 0:
             return []
 
@@ -158,7 +162,7 @@ class MySQLEngine(DatabaseEngine):
             f"WHERE TABLE_SCHEMA = '{safe_db}' AND TABLE_TYPE = 'BASE TABLE' "
             f"ORDER BY TABLE_NAME"
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, env=_get_mysql_env(self.params), capture_output=True, text=True)
         if result.returncode != 0:
             return []
 
@@ -190,7 +194,7 @@ class MySQLEngine(DatabaseEngine):
             f"SELECT TABLE_ROWS FROM information_schema.TABLES "
             f"WHERE TABLE_SCHEMA = '{safe_db}' AND TABLE_NAME = '{safe_table}'"
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, env=_get_mysql_env(self.params), capture_output=True, text=True)
         if result.returncode == 0 and result.stdout.strip():
             try:
                 return int(result.stdout.strip())
@@ -204,7 +208,7 @@ class MySQLEngine(DatabaseEngine):
             '-N', '--column-names', '-e',
             f"SELECT * FROM `{database}`.`{table}` LIMIT {limit}"
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, env=_get_mysql_env(self.params), capture_output=True, text=True)
         if result.returncode != 0 or not result.stdout.strip():
             return [], []
 
@@ -253,7 +257,7 @@ class MySQLEngine(DatabaseEngine):
         output_file = os.path.join(output_path, f"{database}.sql")
 
         with open(output_file, 'w') as f:
-            result = subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, text=True)
+            result = subprocess.run(cmd, env=_get_mysql_env(self.params), stdout=f, stderr=subprocess.PIPE, text=True)
 
         if result.returncode != 0:
             console.print(f"[red]mysqldump error: {result.stderr}[/red]")
@@ -287,13 +291,13 @@ class MySQLEngine(DatabaseEngine):
             drop_cmd = ['mysql'] + _build_mysql_args(self.params) + [
                 '-e', f"DROP DATABASE IF EXISTS `{target_database}`; CREATE DATABASE `{target_database}`"
             ]
-            subprocess.run(drop_cmd, capture_output=True, text=True)
+            subprocess.run(drop_cmd, env=_get_mysql_env(self.params), capture_output=True, text=True)
 
         # Restore
         cmd = ['mysql'] + _build_mysql_args(self.params) + [target_database]
 
         with open(sql_file, 'r') as f:
-            result = subprocess.run(cmd, stdin=f, capture_output=True, text=True)
+            result = subprocess.run(cmd, env=_get_mysql_env(self.params), stdin=f, capture_output=True, text=True)
 
         if result.returncode != 0:
             console.print(f"[red]mysql restore error: {result.stderr}[/red]")
@@ -386,7 +390,7 @@ class MySQLEngine(DatabaseEngine):
             cmd = ['mysql'] + _build_mysql_args(source_params) + [
                 '-N', '-e', f"SELECT COUNT(*) FROM `{source_db}`.`{source_table}`"
             ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = subprocess.run(cmd, env=_get_mysql_env(source_params), capture_output=True, text=True)
             if result.returncode == 0:
                 source_count = int(result.stdout.strip())
         except (ValueError, subprocess.SubprocessError):
@@ -407,21 +411,21 @@ class MySQLEngine(DatabaseEngine):
         create_db_cmd = ['mysql'] + _build_mysql_args(target_params) + [
             '-e', f"CREATE DATABASE IF NOT EXISTS `{target_db}`"
         ]
-        subprocess.run(create_db_cmd, capture_output=True, text=True)
+        subprocess.run(create_db_cmd, env=_get_mysql_env(target_params), capture_output=True, text=True)
 
         if drop_target:
             drop_cmd = ['mysql'] + _build_mysql_args(target_params) + [
                 '-e', f"DROP TABLE IF EXISTS `{target_db}`.`{target_table}`"
             ]
-            subprocess.run(drop_cmd, capture_output=True, text=True)
+            subprocess.run(drop_cmd, env=_get_mysql_env(target_params), capture_output=True, text=True)
             console.print(f"[yellow]🗑️  Dropped target table {target_db}.{target_table}[/yellow]")
 
         restore_cmd = ['mysql'] + _build_mysql_args(target_params) + [target_db]
 
         # Pipe: mysqldump | mysql
         try:
-            dump_process = subprocess.Popen(dump_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            restore_process = subprocess.Popen(restore_cmd, stdin=dump_process.stdout, stderr=subprocess.PIPE)
+            dump_process = subprocess.Popen(dump_cmd, env=_get_mysql_env(source_params), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            restore_process = subprocess.Popen(restore_cmd, env=_get_mysql_env(target_params), stdin=dump_process.stdout, stderr=subprocess.PIPE)
             dump_process.stdout.close()
 
             try:
@@ -448,7 +452,7 @@ class MySQLEngine(DatabaseEngine):
             cmd = ['mysql'] + _build_mysql_args(target_params) + [
                 '-N', '-e', f"SELECT COUNT(*) FROM `{target_db}`.`{target_table}`"
             ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = subprocess.run(cmd, env=_get_mysql_env(target_params), capture_output=True, text=True)
             if result.returncode == 0:
                 copied = int(result.stdout.strip())
         except (ValueError, subprocess.SubprocessError):
@@ -481,7 +485,7 @@ class MySQLEngine(DatabaseEngine):
             cmd = ['mysql'] + _build_mysql_args(target_params) + [
                 '-e', f"CREATE DATABASE IF NOT EXISTS `{target_db}`"
             ]
-        subprocess.run(cmd, capture_output=True, text=True)
+        subprocess.run(cmd, env=_get_mysql_env(target_params), capture_output=True, text=True)
 
         # Build pipe
         dump_cmd = ['mysqldump'] + _build_mysql_args(source_params) + [
@@ -495,8 +499,8 @@ class MySQLEngine(DatabaseEngine):
             task = progress.add_task("[cyan]mysqldump | mysql ...", total=None)
 
             try:
-                dump_process = subprocess.Popen(dump_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                restore_process = subprocess.Popen(restore_cmd, stdin=dump_process.stdout, stderr=subprocess.PIPE)
+                dump_process = subprocess.Popen(dump_cmd, env=_get_mysql_env(source_params), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                restore_process = subprocess.Popen(restore_cmd, env=_get_mysql_env(target_params), stdin=dump_process.stdout, stderr=subprocess.PIPE)
                 dump_process.stdout.close()
 
                 try:
@@ -525,7 +529,7 @@ class MySQLEngine(DatabaseEngine):
                 f"SELECT SUM(TABLE_ROWS) FROM information_schema.TABLES "
                 f"WHERE TABLE_SCHEMA = '{target_db}'"
             ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = subprocess.run(cmd, env=_get_mysql_env(target_params), capture_output=True, text=True)
             if result.returncode == 0 and result.stdout.strip() and result.stdout.strip() != 'NULL':
                 total_rows = int(result.stdout.strip())
         except (ValueError, subprocess.SubprocessError):

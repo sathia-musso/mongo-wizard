@@ -68,12 +68,12 @@ def open_tunnel(db_uri: str, ssh_config: str | dict[str, Any]) -> str:
     # Find a free local port
     local_port = _find_free_port()
 
-    # Build SSH command
+        # Build SSH command
     if isinstance(ssh_config, str):
         # Simple hostname - relies on ~/.ssh/config
         ssh_target = ssh_config
         ssh_cmd = [
-            'ssh', '-f', '-N',
+            'ssh', '-N',
             '-L', f'{local_port}:{remote_host}:{remote_port}',
             ssh_target
         ]
@@ -83,7 +83,7 @@ def open_tunnel(db_uri: str, ssh_config: str | dict[str, Any]) -> str:
         ssh_user = ssh_config.get('user', 'root')
         ssh_port = ssh_config.get('port', 22)
         ssh_cmd = [
-            'ssh', '-f', '-N',
+            'ssh', '-N',
             '-p', str(ssh_port),
             '-L', f'{local_port}:{remote_host}:{remote_port}',
         ]
@@ -96,33 +96,25 @@ def open_tunnel(db_uri: str, ssh_config: str | dict[str, Any]) -> str:
 
     try:
         proc = subprocess.Popen(ssh_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        _active_tunnels.append(proc)
 
-        # With -f, SSH forks to background after successful auth.
-        # The parent process (our Popen) exits with code 0 on success,
-        # or non-zero on auth/connection failure.
-        # We wait for it to finish forking.
-        try:
-            proc.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            raise ConnectionError("SSH tunnel timed out during setup (15s)")
-
-        if proc.returncode != 0:
-            stderr = proc.stderr.read().decode('utf-8', errors='replace').strip()
-            raise ConnectionError(f"SSH tunnel failed (exit {proc.returncode}): {stderr}")
-
-        # SSH forked successfully - give the tunnel a moment to be ready
+        # Give the tunnel a moment to be ready
         time.sleep(0.5)
 
         # Verify the local port is actually listening
-        for attempt in range(5):
+        for attempt in range(10):
+            if proc.poll() is not None:
+                stderr = proc.stderr.read().decode('utf-8', errors='replace').strip()
+                raise ConnectionError(f"SSH tunnel failed (exit {proc.returncode}): {stderr}")
+                
             try:
                 with socket.create_connection(('127.0.0.1', local_port), timeout=2):
                     break
             except (ConnectionRefusedError, OSError):
-                if attempt < 4:
+                if attempt < 9:
                     time.sleep(0.5)
                 else:
+                    proc.kill()
                     raise ConnectionError(
                         f"SSH tunnel opened but port {local_port} is not responding. "
                         f"Check that the remote database is running on {remote_host}:{remote_port}"

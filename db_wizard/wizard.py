@@ -99,8 +99,8 @@ class DbWizard:
             return host_value.get('uri', '')
         return host_value
 
-    def select_or_add_host(self, purpose: str = "source", filter_scheme: str | None = None) -> str:
-        """Select saved host or add new one. Returns a usable URI."""
+    def select_or_add_host(self, purpose: str = "source", filter_scheme: str | None = None) -> dict[str, Any]:
+        """Select saved host or add new one. Returns a dict with resolved_uri, raw_uri, and ssh_tunnel."""
         from .flows.selection import SelectionFlow
         return SelectionFlow(self).select_or_add_host(purpose, filter_scheme)
 

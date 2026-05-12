@@ -80,9 +80,11 @@ class RestoreWizardFlow:
         # 3. Select target database instance
         self.wizard.clear_screen()
         console.print("\n[bold cyan]SELECT RESTORE TARGET[/bold cyan]\n")
-        target_uri = self.wizard.select_or_add_host("restore target")
-        if not target_uri:
+        target_host = self.wizard.select_or_add_host("restore target")
+        if not target_host:
             return
+
+        target_uri = target_host['resolved_uri']
 
         # Test connection
         console.print("\n[dim]Testing connection...[/dim]")
@@ -137,12 +139,13 @@ class RestoreWizardFlow:
 
                 task = BackupTask.create_restore_task(
                     name=task_name,
-                    db_uri=target_uri,
+                    db_uri=target_host['raw_uri'],
                     backup_file=backup_file,
                     target_database=target_database,
                     storage_url=storage_url,
                     drop_target=drop_target
                 )
+                task['ssh_tunnel'] = target_host['ssh_tunnel']
 
                 self.wizard.settings_manager.add_task(task_name, task)
                 console.print(f"[green]✓ Task '{task_name}' saved![/green]")

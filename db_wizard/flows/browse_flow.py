@@ -21,10 +21,11 @@ class BrowseWizardFlow:
         self.wizard.clear_screen()
         console.print(Panel("[bold cyan]🔍 DATABASE BROWSER[/bold cyan]", style="cyan"))
 
-        uri = self.wizard.select_or_add_host("browse")
-        if not uri:
+        host = self.wizard.select_or_add_host("browse")
+        if not host:
             return
             
+        uri = host['resolved_uri']
         try:
             engine = EngineFactory.create(uri)
             engine.connect()

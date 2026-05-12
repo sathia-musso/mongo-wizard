@@ -22,8 +22,8 @@ class CopyWizardFlow:
 
         # Step 1: Select source
         console.print("\n[bold]STEP 1: SELECT SOURCE[/bold]")
-        source_uri = self.wizard.select_or_add_host("source")
-        source_engine = EngineFactory.create(source_uri)
+        source_host = self.wizard.select_or_add_host("source")
+        source_engine = EngineFactory.create(source_host['resolved_uri'])
         source_engine.connect()
 
         source_db = self.wizard.select_database(source_engine, "source")
@@ -40,8 +40,8 @@ class CopyWizardFlow:
         # Step 2: Select target (filtered to same engine type)
         console.print("\n[bold]STEP 2: SELECT TARGET[/bold]")
         source_scheme = source_engine.scheme
-        target_uri = self.wizard.select_or_add_host("target", filter_scheme=source_scheme)
-        target_engine = EngineFactory.create(target_uri)
+        target_host = self.wizard.select_or_add_host("target", filter_scheme=source_scheme)
+        target_engine = EngineFactory.create(target_host['resolved_uri'])
 
         target_engine.connect()
 
@@ -85,14 +85,14 @@ class CopyWizardFlow:
         summary.add_column("Property", style="cyan")
         summary.add_column("Value", style="yellow")
 
-        summary.add_row("Source", f"{_mask_password(source_uri)}")
+        summary.add_row("Source", f"{_mask_password(source_host['raw_uri'])}")
         summary.add_row("Source DB", source_db)
         if isinstance(source_collection, list):
             summary.add_row("Source Collections", f"{len(source_collection)} selected")
         else:
             summary.add_row("Source Collection", source_collection or "ALL")
         summary.add_row("", "")
-        summary.add_row("Target", f"{_mask_password(target_uri)}")
+        summary.add_row("Target", f"{_mask_password(target_host['raw_uri'])}")
         summary.add_row("Target DB", target_db)
         if isinstance(source_collection, list):
             summary.add_row("Target Collections", "Same names as source")
@@ -235,8 +235,10 @@ class CopyWizardFlow:
             task_name = Prompt.ask("Enter a name for this task")
 
             task_config = {
-                'source_uri': source_uri,
-                'target_uri': target_uri,
+                'source_uri': source_host['raw_uri'],
+                'target_uri': target_host['raw_uri'],
+                'source_ssh_tunnel': source_host['ssh_tunnel'],
+                'target_ssh_tunnel': target_host['ssh_tunnel'],
                 'source_db': source_db,
                 'target_db': target_db,
                 'source_collection': source_collection,

@@ -17,8 +17,8 @@ class SelectionFlow:
     def __init__(self, wizard_context):
         self.wizard = wizard_context
 
-    def select_or_add_host(self, purpose: str = "source", filter_scheme: str | None = None) -> str:
-        """Select saved host or add new one. Returns a usable URI."""
+    def select_or_add_host(self, purpose: str = "source", filter_scheme: str | None = None) -> dict[str, Any]:
+        """Select saved host or add new one. Returns a dict with resolved_uri, raw_uri, and ssh_tunnel."""
         self.wizard.clear_screen()
         console.print(f"\n[bold cyan]Select {purpose.upper()} host:[/bold cyan]")
         console.print("[dim]Type 'x' at any prompt to return to main menu[/dim]\n")
@@ -46,25 +46,28 @@ class SelectionFlow:
 
         if choice <= len(saved_hosts_list) and choice >= 1:
             host_name, host_value = saved_hosts_list[choice - 1]
-            uri = self.wizard._resolve_host(host_value)
+            resolved_uri = self.wizard._resolve_host(host_value)
+            raw_uri = self.wizard._get_host_uri(host_value)
+            tunnel_config = host_value.get('ssh_tunnel') if isinstance(host_value, dict) else None
+            
             console.print(f"[yellow]Testing connection to {host_name}...[/yellow]")
-            is_online, status = _test_connection(uri)
+            is_online, status = _test_connection(resolved_uri)
             if is_online:
                 console.print(f"[green]✅ Connected: {status}[/green]")
-                return uri
+                return {'resolved_uri': resolved_uri, 'raw_uri': raw_uri, 'ssh_tunnel': tunnel_config}
             else:
                 console.print(f"[red]❌ Cannot connect: {status}[/red]")
                 if Confirm.ask("Use anyway?"):
-                    return uri
+                    return {'resolved_uri': resolved_uri, 'raw_uri': raw_uri, 'ssh_tunnel': tunnel_config}
                 return self.select_or_add_host(purpose, filter_scheme)
 
         elif choice == len(saved_hosts_list) + 1:
             return self.add_new_host()
         else:
             uri = _ask(f"Enter {purpose} URI (e.g. mongodb://..., mysql://...)")
-            return uri
+            return {'resolved_uri': uri, 'raw_uri': uri, 'ssh_tunnel': None}
 
-    def add_new_host(self) -> str:
+    def add_new_host(self) -> dict[str, Any]:
         """Interactive flow to add a new host to settings"""
         self.wizard.clear_screen()
         console.print(Panel("[bold cyan]➕ ADD NEW HOST[/bold cyan]", style="cyan"))
@@ -165,8 +168,8 @@ class SelectionFlow:
         console.print(f"[green]✅ Saved host '{name}'[/green]")
 
         if ssh_tunnel and is_online:
-            return test_uri
-        return uri
+            return {'resolved_uri': test_uri, 'raw_uri': uri, 'ssh_tunnel': ssh_tunnel}
+        return {'resolved_uri': test_uri, 'raw_uri': uri, 'ssh_tunnel': ssh_tunnel}
 
     def select_database(self, engine, purpose: str = "source") -> str:
         """Select database from list. Accepts a DatabaseEngine."""
