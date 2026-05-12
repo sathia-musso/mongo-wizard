@@ -262,7 +262,8 @@ class TestSelectionFlow:
         assert isinstance(result, list)
         assert len(result) == 3
 
-    def test_select_or_add_host_manual_uri(self):
+    @patch('db_wizard.flows.selection._ask', return_value="mongodb://myhost:27017")
+    def test_select_or_add_host_manual_uri(self, mock_ask):
         """User picks 'enter URI manually' option."""
         from db_wizard.flows.selection import SelectionFlow
 
@@ -271,7 +272,9 @@ class TestSelectionFlow:
         with patch("db_wizard.flows.selection._ask", side_effect=["2", "mongodb://myhost:27017"]):
             result = SelectionFlow(wizard).select_or_add_host("source")
 
-        assert result == "mongodb://myhost:27017"
+        assert result['resolved_uri'] == "mongodb://myhost:27017"
+        assert result['raw_uri'] == "mongodb://myhost:27017"
+        assert result['ssh_tunnel'] is None
 
     def test_select_or_add_host_saved_host_online(self):
         """User picks a saved host that's online."""
@@ -289,7 +292,9 @@ class TestSelectionFlow:
              patch("db_wizard.flows.selection._test_connection", return_value=(True, "OK (5 databases)")):
             result = SelectionFlow(wizard).select_or_add_host("source")
 
-        assert result == "mongodb://prod:27017"
+        assert result['resolved_uri'] == "mongodb://prod:27017"
+        assert result['raw_uri'] == "mongodb://prod:27017"
+        assert result['ssh_tunnel'] is None
 
 
 class TestCopyWizardFlow:
@@ -322,8 +327,8 @@ class TestCopyWizardFlow:
         target_engine = self._make_engine()
 
         wizard.select_or_add_host.side_effect = [
-            "mongodb://source:27017",
-            "mongodb://target:27017",
+            {'resolved_uri': "mongodb://source:27017", 'raw_uri': "mongodb://source:27017", 'ssh_tunnel': None},
+            {'resolved_uri': "mongodb://target:27017", 'raw_uri': "mongodb://target:27017", 'ssh_tunnel': None},
         ]
         wizard.select_database.return_value = "mydb"
         wizard.select_collection.return_value = "users"
@@ -370,8 +375,8 @@ class TestCopyWizardFlow:
         }
 
         wizard.select_or_add_host.side_effect = [
-            "mongodb://source:27017",
-            "mongodb://target:27017",
+            {'resolved_uri': "mongodb://source:27017", 'raw_uri': "mongodb://source:27017", 'ssh_tunnel': None},
+            {'resolved_uri': "mongodb://target:27017", 'raw_uri': "mongodb://target:27017", 'ssh_tunnel': None},
         ]
         wizard.select_database.return_value = "mydb"
         wizard.select_collection.return_value = None  # ALL collections
@@ -419,8 +424,8 @@ class TestCopyWizardFlow:
         target_engine = self._make_engine()
 
         wizard.select_or_add_host.side_effect = [
-            "mongodb://source:27017",
-            "mongodb://target:27017",
+            {'resolved_uri': "mongodb://source:27017", 'raw_uri': "mongodb://source:27017", 'ssh_tunnel': None},
+            {'resolved_uri': "mongodb://target:27017", 'raw_uri': "mongodb://target:27017", 'ssh_tunnel': None},
         ]
         wizard.select_database.return_value = "mydb"
         wizard.select_collection.return_value = "users"

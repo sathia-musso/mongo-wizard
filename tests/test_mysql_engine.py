@@ -59,7 +59,7 @@ class TestBuildMysqlArgs:
         assert '3307' in args
         assert '-u' in args
         assert 'admin' in args
-        assert '-psecret' in args
+        assert '-psecret' not in args
 
     def test_without_password(self):
         params = {'host': 'localhost', 'port': 3306, 'user': 'root', 'password': ''}

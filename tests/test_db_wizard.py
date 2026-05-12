@@ -326,6 +326,7 @@ class TestSSHTunnel:
         mock_proc = MagicMock()
         mock_proc.wait.return_value = None
         mock_proc.returncode = 0
+        mock_proc.poll.return_value = None
         mock_popen.return_value = mock_proc
         mock_socket.return_value.__enter__ = MagicMock()
         mock_socket.return_value.__exit__ = MagicMock()
@@ -348,6 +349,7 @@ class TestSSHTunnel:
         mock_proc = MagicMock()
         mock_proc.wait.return_value = None
         mock_proc.returncode = 0
+        mock_proc.poll.return_value = None
         mock_popen.return_value = mock_proc
         mock_socket.return_value.__enter__ = MagicMock()
         mock_socket.return_value.__exit__ = MagicMock()
